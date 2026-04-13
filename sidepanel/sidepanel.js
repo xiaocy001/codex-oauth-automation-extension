@@ -83,12 +83,16 @@ const inputCfDomain = document.getElementById('input-cf-domain');
 const btnCfDomainMode = document.getElementById('btn-cf-domain-mode');
 const inputRunCount = document.getElementById('input-run-count');
 const inputAutoSkipFailures = document.getElementById('input-auto-skip-failures');
+const inputAutoSkipFailuresThreadIntervalMinutes = document.getElementById('input-auto-skip-failures-thread-interval-minutes');
 const inputAutoDelayEnabled = document.getElementById('input-auto-delay-enabled');
 const inputAutoDelayMinutes = document.getElementById('input-auto-delay-minutes');
 const inputAutoStepDelaySeconds = document.getElementById('input-auto-step-delay-seconds');
 const autoStartModal = document.getElementById('auto-start-modal');
 const autoStartTitle = autoStartModal?.querySelector('.modal-title');
 const autoStartMessage = document.getElementById('auto-start-message');
+const modalOptionRow = document.getElementById('modal-option-row');
+const modalOptionInput = document.getElementById('modal-option-input');
+const modalOptionText = document.getElementById('modal-option-text');
 const btnAutoStartClose = document.getElementById('btn-auto-start-close');
 const btnAutoStartCancel = document.getElementById('btn-auto-start-cancel');
 const btnAutoStartRestart = document.getElementById('btn-auto-start-restart');
@@ -109,9 +113,13 @@ const SKIPPABLE_STEPS = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9]);
 const AUTO_DELAY_MIN_MINUTES = 1;
 const AUTO_DELAY_MAX_MINUTES = 1440;
 const AUTO_DELAY_DEFAULT_MINUTES = 30;
+const AUTO_FALLBACK_THREAD_INTERVAL_MIN_MINUTES = 0;
+const AUTO_FALLBACK_THREAD_INTERVAL_MAX_MINUTES = 1440;
+const AUTO_FALLBACK_THREAD_INTERVAL_DEFAULT_MINUTES = 0;
 const AUTO_STEP_DELAY_MIN_SECONDS = 0;
 const AUTO_STEP_DELAY_MAX_SECONDS = 600;
 const DEFAULT_LOCAL_CPA_STEP9_MODE = 'submit';
+const AUTO_SKIP_FAILURES_PROMPT_DISMISSED_STORAGE_KEY = 'multipage-auto-skip-failures-prompt-dismissed';
 
 let latestState = null;
 let currentAutoRun = {
@@ -128,6 +136,7 @@ let settingsAutoSaveTimer = null;
 let cloudflareDomainEditMode = false;
 let modalChoiceResolver = null;
 let currentModalActions = [];
+let modalResultBuilder = null;
 let scheduledCountdownTimer = null;
 let hotmailActionInFlight = false;
 let hotmailListExpanded = false;
@@ -198,6 +207,17 @@ function dismissToast(toast) {
   toast.addEventListener('animationend', () => toast.remove());
 }
 
+function resetActionModalOption() {
+  if (!modalOptionRow || !modalOptionInput || !modalOptionText) {
+    return;
+  }
+
+  modalOptionRow.hidden = true;
+  modalOptionInput.checked = false;
+  modalOptionInput.disabled = false;
+  modalOptionText.textContent = '不再提示';
+}
+
 function resetActionModalButtons() {
   const buttons = [btnAutoStartCancel, btnAutoStartRestart, btnAutoStartContinue];
   buttons.forEach((button) => {
@@ -224,18 +244,40 @@ function configureActionModalButton(button, action) {
   button.onclick = () => resolveModalChoice(action.id);
 }
 
+function configureActionModalOption(option) {
+  if (!modalOptionRow || !modalOptionInput || !modalOptionText) {
+    return;
+  }
+
+  if (!option) {
+    resetActionModalOption();
+    return;
+  }
+
+  modalOptionRow.hidden = false;
+  modalOptionInput.checked = Boolean(option.checked);
+  modalOptionInput.disabled = Boolean(option.disabled);
+  modalOptionText.textContent = option.label || '不再提示';
+}
+
 function resolveModalChoice(choice) {
+  const optionChecked = Boolean(modalOptionInput?.checked);
+  const result = typeof modalResultBuilder === 'function'
+    ? modalResultBuilder(choice, { optionChecked })
+    : choice;
   if (modalChoiceResolver) {
-    modalChoiceResolver(choice);
+    modalChoiceResolver(result);
     modalChoiceResolver = null;
   }
+  modalResultBuilder = null;
   resetActionModalButtons();
+  resetActionModalOption();
   if (autoStartModal) {
     autoStartModal.hidden = true;
   }
 }
 
-function openActionModal({ title, message, actions }) {
+function openActionModal({ title, message, actions, option, buildResult }) {
   if (!autoStartModal) {
     return Promise.resolve(null);
   }
@@ -244,12 +286,15 @@ function openActionModal({ title, message, actions }) {
     resolveModalChoice(null);
   }
 
+  resetActionModalButtons();
   autoStartTitle.textContent = title;
   autoStartMessage.textContent = message;
   currentModalActions = actions || [];
+  modalResultBuilder = typeof buildResult === 'function' ? buildResult : null;
   configureActionModalButton(btnAutoStartCancel, currentModalActions[0]);
   configureActionModalButton(btnAutoStartRestart, currentModalActions[1]);
   configureActionModalButton(btnAutoStartContinue, currentModalActions[2]);
+  configureActionModalOption(option);
   autoStartModal.hidden = false;
 
   return new Promise((resolve) => {
@@ -283,6 +328,42 @@ async function openConfirmModal({ title, message, confirmLabel = '确认', confi
     ],
   });
   return choice === 'confirm';
+}
+
+function isAutoSkipFailuresPromptDismissed() {
+  return localStorage.getItem(AUTO_SKIP_FAILURES_PROMPT_DISMISSED_STORAGE_KEY) === '1';
+}
+
+function setAutoSkipFailuresPromptDismissed(dismissed) {
+  if (dismissed) {
+    localStorage.setItem(AUTO_SKIP_FAILURES_PROMPT_DISMISSED_STORAGE_KEY, '1');
+  } else {
+    localStorage.removeItem(AUTO_SKIP_FAILURES_PROMPT_DISMISSED_STORAGE_KEY);
+  }
+}
+
+async function openAutoSkipFailuresConfirmModal() {
+  const result = await openActionModal({
+    title: '兜底说明',
+    message: '开启后，当某一轮失败且无法继续时，会直接放弃当前线程，重新开新一轮，直到补足目标运行次数。线程间隔只在开启兜底且运行次数大于 1 时生效。',
+    actions: [
+      { id: null, label: '取消', variant: 'btn-ghost' },
+      { id: 'confirm', label: '确认开启', variant: 'btn-primary' },
+    ],
+    option: {
+      label: '不再提示',
+      checked: false,
+    },
+    buildResult: (choice, meta) => ({
+      choice,
+      optionChecked: Boolean(meta?.optionChecked),
+    }),
+  });
+
+  return {
+    confirmed: result?.choice === 'confirm',
+    dismissPrompt: Boolean(result?.optionChecked),
+  };
 }
 
 function updateConfigMenuControls() {
@@ -450,6 +531,23 @@ function normalizeAutoDelayMinutes(value) {
   return Math.min(AUTO_DELAY_MAX_MINUTES, Math.max(AUTO_DELAY_MIN_MINUTES, Math.floor(numeric)));
 }
 
+function normalizeAutoRunThreadIntervalMinutes(value) {
+  const rawValue = String(value ?? '').trim();
+  if (!rawValue) {
+    return AUTO_FALLBACK_THREAD_INTERVAL_DEFAULT_MINUTES;
+  }
+
+  const numeric = Number(rawValue);
+  if (!Number.isFinite(numeric)) {
+    return AUTO_FALLBACK_THREAD_INTERVAL_DEFAULT_MINUTES;
+  }
+
+  return Math.min(
+    AUTO_FALLBACK_THREAD_INTERVAL_MAX_MINUTES,
+    Math.max(AUTO_FALLBACK_THREAD_INTERVAL_MIN_MINUTES, Math.floor(numeric))
+  );
+}
+
 function normalizeAutoStepDelaySeconds(value) {
   const rawValue = String(value ?? '').trim();
   if (!rawValue) {
@@ -467,6 +565,19 @@ function normalizeAutoStepDelaySeconds(value) {
 function formatAutoStepDelayInputValue(value) {
   const normalized = normalizeAutoStepDelaySeconds(value);
   return normalized === null ? '' : String(normalized);
+}
+
+function getRunCountValue() {
+  return Math.min(50, Math.max(1, parseInt(inputRunCount.value, 10) || 1));
+}
+
+function updateFallbackThreadIntervalInputState() {
+  if (!inputAutoSkipFailuresThreadIntervalMinutes) {
+    return;
+  }
+
+  const enabled = inputAutoSkipFailures.checked && getRunCountValue() > 1;
+  inputAutoSkipFailuresThreadIntervalMinutes.disabled = !enabled;
 }
 
 function updateAutoDelayInputState() {
@@ -637,6 +748,7 @@ function collectSettingsPayload() {
     cloudflareDomain: selectedCloudflareDomain,
     cloudflareDomains: domains,
     autoRunSkipFailures: inputAutoSkipFailures.checked,
+    autoRunFallbackThreadIntervalMinutes: normalizeAutoRunThreadIntervalMinutes(inputAutoSkipFailuresThreadIntervalMinutes.value),
     autoRunDelayEnabled: inputAutoDelayEnabled.checked,
     autoRunDelayMinutes: normalizeAutoDelayMinutes(inputAutoDelayMinutes.value),
     autoStepDelaySeconds: normalizeAutoStepDelaySeconds(inputAutoStepDelaySeconds.value),
@@ -818,6 +930,7 @@ function applyAutoRunStatus(payload = currentAutoRun) {
   }
 
   updateAutoDelayInputState();
+  updateFallbackThreadIntervalInputState();
   syncScheduledCountdownTicker();
   updateStopButtonState(scheduled || paused || locked || Object.values(getStepStatuses()).some(status => status === 'running'));
   updateConfigMenuControls();
@@ -879,6 +992,7 @@ function applySettingsState(state) {
   renderCloudflareDomainOptions(state?.cloudflareDomain || '');
   setCloudflareDomainEditMode(false, { clearInput: true });
   inputAutoSkipFailures.checked = Boolean(state?.autoRunSkipFailures);
+  inputAutoSkipFailuresThreadIntervalMinutes.value = String(normalizeAutoRunThreadIntervalMinutes(state?.autoRunFallbackThreadIntervalMinutes));
   inputAutoDelayEnabled.checked = Boolean(state?.autoRunDelayEnabled);
   inputAutoDelayMinutes.value = String(normalizeAutoDelayMinutes(state?.autoRunDelayMinutes));
   inputAutoStepDelaySeconds.value = formatAutoStepDelayInputValue(state?.autoStepDelaySeconds);
@@ -889,6 +1003,7 @@ function applySettingsState(state) {
   applyAutoRunStatus(state);
   markSettingsDirty(false);
   updateAutoDelayInputState();
+  updateFallbackThreadIntervalInputState();
   updatePanelModeUI();
   updateMailProviderUI();
   updateButtonStates();
@@ -2384,8 +2499,40 @@ inputInbucketHost.addEventListener('blur', () => {
   saveSettings({ silent: true }).catch(() => { });
 });
 
-inputAutoSkipFailures.addEventListener('change', () => {
+inputRunCount.addEventListener('input', () => {
+  updateFallbackThreadIntervalInputState();
+});
+inputRunCount.addEventListener('blur', () => {
+  inputRunCount.value = String(getRunCountValue());
+  updateFallbackThreadIntervalInputState();
+});
+
+inputAutoSkipFailures.addEventListener('change', async () => {
+  if (inputAutoSkipFailures.checked && !isAutoSkipFailuresPromptDismissed()) {
+    const result = await openAutoSkipFailuresConfirmModal();
+    if (!result.confirmed) {
+      inputAutoSkipFailures.checked = false;
+      updateFallbackThreadIntervalInputState();
+      return;
+    }
+    if (result.dismissPrompt) {
+      setAutoSkipFailuresPromptDismissed(true);
+    }
+  }
+
+  updateFallbackThreadIntervalInputState();
   markSettingsDirty(true);
+  saveSettings({ silent: true }).catch(() => { });
+});
+
+inputAutoSkipFailuresThreadIntervalMinutes.addEventListener('input', () => {
+  markSettingsDirty(true);
+  scheduleSettingsAutoSave();
+});
+inputAutoSkipFailuresThreadIntervalMinutes.addEventListener('blur', () => {
+  inputAutoSkipFailuresThreadIntervalMinutes.value = String(
+    normalizeAutoRunThreadIntervalMinutes(inputAutoSkipFailuresThreadIntervalMinutes.value)
+  );
   saveSettings({ silent: true }).catch(() => { });
 });
 
@@ -2507,12 +2654,22 @@ chrome.runtime.onMessage.addListener((message) => {
           inputEmail.value = getCurrentHotmailEmail();
         }
       }
+      if (message.payload.autoRunSkipFailures !== undefined) {
+        inputAutoSkipFailures.checked = Boolean(message.payload.autoRunSkipFailures);
+        updateFallbackThreadIntervalInputState();
+      }
       if (message.payload.autoRunDelayEnabled !== undefined) {
         inputAutoDelayEnabled.checked = Boolean(message.payload.autoRunDelayEnabled);
         updateAutoDelayInputState();
       }
       if (message.payload.autoRunDelayMinutes !== undefined) {
         inputAutoDelayMinutes.value = String(normalizeAutoDelayMinutes(message.payload.autoRunDelayMinutes));
+      }
+      if (message.payload.autoRunFallbackThreadIntervalMinutes !== undefined) {
+        inputAutoSkipFailuresThreadIntervalMinutes.value = String(
+          normalizeAutoRunThreadIntervalMinutes(message.payload.autoRunFallbackThreadIntervalMinutes)
+        );
+        updateFallbackThreadIntervalInputState();
       }
       if (message.payload.autoStepDelaySeconds !== undefined) {
         inputAutoStepDelaySeconds.value = formatAutoStepDelayInputValue(message.payload.autoStepDelaySeconds);

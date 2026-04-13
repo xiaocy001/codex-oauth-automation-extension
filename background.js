@@ -50,7 +50,7 @@ initializeSessionStorageAccess();
 // 状态管理（chrome.storage.session + chrome.storage.local）
 // ============================================================
 
-const PERSISTED_SETTING_DEFAULTS = {
+const LEGACY_PERSISTED_SETTING_DEFAULTS = {
   panelMode: 'cpa', // Step 1 / Step 9 的来源模式：cpa | sub2api。
   vpsUrl: '', // VPS 面板地址，可手动填写。
   vpsPassword: '', // VPS 面板登录密码，可手动填写。
@@ -61,6 +61,18 @@ const PERSISTED_SETTING_DEFAULTS = {
   sub2apiGroupName: DEFAULT_SUB2API_GROUP_NAME, // SUB2API 创建账号时绑定的分组名。
   customPassword: '', // 自定义账号密码；留空时由程序自动生成随机密码。
   autoRunSkipFailures: false, // 自动运行遇到失败步骤后，是否继续执行后续流程。
+  autoRunFallbackThreadIntervalMinutes: 0, // 兜底模式下，两轮线程之间的等待分钟数。
+  autoRunDelayEnabled: false, // 自动运行是否启用启动前倒计时。
+  autoRunDelayMinutes: 30, // 自动运行倒计时分钟数。
+  autoStepDelaySeconds: null, // 自动运行每一步执行前的额外等待秒数；0 或空表示不延迟。
+  mailProvider: '163', // 验证码邮箱来源（163 / 163-vip / qq / inbucket）。
+  autoRunSkipFailures: false, // 自动运行遇到失败步骤后，是否继续执行后续流程。
+  autoRunDelayEnabled: false, // 自动运行是否启用启动前倒计时。
+  autoRunDelayMinutes: 30, // 自动运行倒计时分钟数。
+  autoStepDelaySeconds: null, // 自动运行每一步执行前的额外等待秒数；0 或空表示不延迟。
+  mailProvider: '163', // 验证码邮箱来源（163 / 163-vip / qq / inbucket）。
+  autoRunSkipFailures: false, // 自动运行遇到失败步骤后，是否继续执行后续流程。
+  autoRunFallbackThreadIntervalMinutes: 0, // 兜底模式下，两轮线程之间的等待分钟数。
   autoRunDelayEnabled: false, // 自动运行是否启用启动前倒计时。
   autoRunDelayMinutes: 30, // 自动运行倒计时分钟数。
   autoStepDelaySeconds: null, // 自动运行每一步执行前的额外等待秒数；0 或空表示不延迟。
@@ -70,6 +82,30 @@ const PERSISTED_SETTING_DEFAULTS = {
   inbucketMailbox: '', // 仅当 mailProvider 为 inbucket 时填写邮箱名，其他情况保持为空。
   cloudflareDomain: '', // 仅当 emailGenerator=cloudflare 时填写自定义域名。
   cloudflareDomains: [], // Cloudflare 可选域名列表。
+  hotmailAccounts: [],
+};
+
+const PERSISTED_SETTING_DEFAULTS = {
+  panelMode: 'cpa',
+  vpsUrl: '',
+  vpsPassword: '',
+  localCpaStep9Mode: DEFAULT_LOCAL_CPA_STEP9_MODE,
+  sub2apiUrl: DEFAULT_SUB2API_URL,
+  sub2apiEmail: '',
+  sub2apiPassword: '',
+  sub2apiGroupName: DEFAULT_SUB2API_GROUP_NAME,
+  customPassword: '',
+  autoRunSkipFailures: false,
+  autoRunFallbackThreadIntervalMinutes: 0,
+  autoRunDelayEnabled: false,
+  autoRunDelayMinutes: 30,
+  autoStepDelaySeconds: null,
+  mailProvider: '163',
+  emailGenerator: 'duck',
+  inbucketHost: '',
+  inbucketMailbox: '',
+  cloudflareDomain: '',
+  cloudflareDomains: [],
   hotmailAccounts: [],
 };
 
@@ -120,6 +156,23 @@ function normalizeAutoRunDelayMinutes(value) {
   return Math.min(
     AUTO_RUN_DELAY_MAX_MINUTES,
     Math.max(AUTO_RUN_DELAY_MIN_MINUTES, Math.floor(numeric))
+  );
+}
+
+function normalizeAutoRunFallbackThreadIntervalMinutes(value) {
+  const rawValue = String(value ?? '').trim();
+  if (!rawValue) {
+    return 0;
+  }
+
+  const numeric = Number(rawValue);
+  if (!Number.isFinite(numeric)) {
+    return 0;
+  }
+
+  return Math.min(
+    AUTO_RUN_DELAY_MAX_MINUTES,
+    Math.max(0, Math.floor(numeric))
   );
 }
 
@@ -256,6 +309,8 @@ function normalizePersistentSettingValue(key, value) {
     case 'autoRunSkipFailures':
     case 'autoRunDelayEnabled':
       return Boolean(value);
+    case 'autoRunFallbackThreadIntervalMinutes':
+      return normalizeAutoRunFallbackThreadIntervalMinutes(value);
     case 'autoRunDelayMinutes':
       return normalizeAutoRunDelayMinutes(value);
     case 'autoStepDelaySeconds':
@@ -3435,6 +3490,7 @@ async function autoRunLoop(totalRuns, options = {}) {
         vpsPassword: prevState.vpsPassword,
         customPassword: prevState.customPassword,
         autoRunSkipFailures: prevState.autoRunSkipFailures,
+        autoRunFallbackThreadIntervalMinutes: prevState.autoRunFallbackThreadIntervalMinutes,
         autoRunDelayEnabled: prevState.autoRunDelayEnabled,
         autoRunDelayMinutes: prevState.autoRunDelayMinutes,
         autoStepDelaySeconds: prevState.autoStepDelaySeconds,
@@ -3481,6 +3537,16 @@ async function autoRunLoop(totalRuns, options = {}) {
       successfulRuns += 1;
       autoRunCurrentRun = successfulRuns;
       await addLog(`=== 目标 ${successfulRuns}/${totalRuns} 轮已完成（第 ${attemptRuns} 次尝试成功）===`, 'ok');
+      const fallbackThreadIntervalMinutes = normalizeAutoRunFallbackThreadIntervalMinutes(
+        (await getState()).autoRunFallbackThreadIntervalMinutes
+      );
+      if (autoRunSkipFailures && totalRuns > 1 && successfulRuns < totalRuns && fallbackThreadIntervalMinutes > 0) {
+        await addLog(
+          `兜底模式：第 ${successfulRuns}/${totalRuns} 轮已完成，等待 ${fallbackThreadIntervalMinutes} 分钟后再启动下一轮新线程。`,
+          'info'
+        );
+        await sleepWithStop(fallbackThreadIntervalMinutes * 60 * 1000);
+      }
       continue;
     } catch (err) {
       if (isStopError(err)) {

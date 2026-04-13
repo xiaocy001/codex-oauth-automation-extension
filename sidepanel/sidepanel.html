@@ -172,12 +172,24 @@
           <button id="btn-fetch-email" class="btn btn-outline btn-sm data-inline-btn" type="button">获取</button>
         </div>
       </div>
-      <div class="data-row data-check-row">
+      <div class="data-row">
         <span class="data-label">兜底</span>
-        <label class="data-check" for="input-auto-skip-failures">
-          <input type="checkbox" id="input-auto-skip-failures" />
-          <span>出现错误无法继续时，直接丢弃当前线程并新开一轮，直到补足目标运行次数</span>
-        </label>
+        <div class="data-inline fallback-inline">
+          <label class="toggle-switch" for="input-auto-skip-failures">
+            <input type="checkbox" id="input-auto-skip-failures" />
+            <span class="toggle-switch-track" aria-hidden="true">
+              <span class="toggle-switch-thumb"></span>
+            </span>
+          </label>
+          <div class="fallback-thread-interval">
+            <span class="auto-delay-caption">线程间隔</span>
+            <div class="auto-delay-controls">
+              <input type="number" id="input-auto-skip-failures-thread-interval-minutes" class="data-input auto-delay-input" value="0"
+                min="0" max="1440" step="1" title="兜底模式下，两轮线程之间的等待分钟数" />
+              <span class="data-unit">分钟</span>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="data-row">
         <span class="data-label">延迟</span>
@@ -202,8 +214,7 @@
           </div>
         </div>
       </div>
-    </div>
-    <div class="data-row">
+      <div class="data-row">
       <span class="data-label">OAuth</span>
       <span id="display-oauth-url" class="data-value mono truncate">等待中...</span>
     </div>
@@ -359,6 +370,12 @@
         <button id="btn-auto-start-close" class="modal-close" type="button" aria-label="关闭">×</button>
       </div>
       <p id="auto-start-message" class="modal-message">检测到已有流程进度，选择继续当前还是重新开始。</p>
+      <div id="modal-option-row" class="modal-option-row" hidden>
+        <label class="modal-option-label" for="modal-option-input">
+          <input type="checkbox" id="modal-option-input" />
+          <span id="modal-option-text">不再提示</span>
+        </label>
+      </div>
       <div class="modal-actions">
         <button id="btn-auto-start-cancel" class="btn btn-ghost btn-sm" type="button">取消</button>
         <button id="btn-auto-start-restart" class="btn btn-outline btn-sm" type="button">重新开始</button>
