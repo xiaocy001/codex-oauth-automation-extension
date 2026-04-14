@@ -53,6 +53,8 @@ function extractFunction(name) {
 const bundle = [
   extractFunction('getTabRegistry'),
   extractFunction('normalizeEmailGenerator'),
+  extractFunction('normalizeMail2925Mode'),
+  extractFunction('getMail2925Mode'),
   extractFunction('parseUrlSafely'),
   extractFunction('isHotmailProvider'),
   extractFunction('isCustomMailProvider'),
@@ -70,6 +72,9 @@ const api = new Function(`
 const HOTMAIL_PROVIDER = 'hotmail-api';
 const CLOUDFLARE_TEMP_EMAIL_PROVIDER = 'cloudflare-temp-email';
 const CLOUDFLARE_TEMP_EMAIL_GENERATOR = 'cloudflare-temp-email';
+const MAIL_2925_MODE_PROVIDE = 'provide';
+const MAIL_2925_MODE_RECEIVE = 'receive';
+const DEFAULT_MAIL_2925_MODE = MAIL_2925_MODE_PROVIDE;
 let currentState = {
   tabRegistry: {
     'signup-page': { tabId: 1, ready: true },
