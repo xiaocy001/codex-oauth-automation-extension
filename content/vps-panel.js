@@ -603,25 +603,26 @@ async function step9_vpsVerify(payload) {
   fillInput(urlInput, localhostUrl);
   log(`步骤 9：已填写回调地址：${localhostUrl.slice(0, 80)}...`);
 
-  // Find and click "提交回调 URL" button
+  // Find and click the callback submit button in supported UI languages.
+  const callbackSubmitPattern = /提交回调\s*URL|Submit\s+Callback\s+URL|Отправить\s+Callback\s+URL/i;
   let submitBtn = null;
   try {
     submitBtn = await waitForElementByText(
       '[class*="callbackActions"] button, [class*="callbackSection"] button',
-      /提交/,
+      callbackSubmitPattern,
       5000
     );
   } catch {
     try {
-      submitBtn = await waitForElementByText('button.btn', /提交回调/, 5000);
+      submitBtn = await waitForElementByText('button.btn', callbackSubmitPattern, 5000);
     } catch {
-      throw new Error('未找到“提交回调 URL”按钮。URL: ' + location.href);
+      throw new Error('未找到回调提交按钮（提交回调 URL / Submit Callback URL / Отправить Callback URL）。URL: ' + location.href);
     }
   }
 
   await humanPause(450, 1200);
   simulateClick(submitBtn);
-  log('步骤 9：已点击“提交回调 URL”，正在等待认证结果...');
+  log('步骤 9：已点击回调提交按钮，正在等待认证结果...');
 
   const verifiedStatus = await waitForExactSuccessBadge();
   log(`步骤 9：${verifiedStatus}`, 'ok');
