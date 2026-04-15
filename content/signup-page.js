@@ -542,6 +542,7 @@ function getStep5ErrorText() {
 
 async function waitForStep5SubmitOutcome(timeout = 15000) {
   const start = Date.now();
+  let step8Logged = false;
 
   while (Date.now() - start < timeout) {
     throwIfStopped();
@@ -551,12 +552,16 @@ async function waitForStep5SubmitOutcome(timeout = 15000) {
       return { invalidProfile: true, errorText };
     }
 
-    if (isAddPhonePageReady()) {
-      return { success: true, addPhonePage: true };
+    if (isStep8Ready()) {
+      if (!step8Logged) {
+        log('步骤 5：检测到页面已进入 OAuth 授权状态，跳过中间步骤并直达步骤 8。', 'warn');
+        step8Logged = true;
+      }
+      return { success: true, jumpToStep8: true };
     }
 
-    if (isStep8Ready()) {
-      return { success: true };
+    if (isAddPhonePageReady()) {
+      return { success: true, addPhonePage: true };
     }
 
     await sleep(150);
@@ -1848,5 +1853,8 @@ async function step5_fillNameBirthday(payload) {
   }
 
   log(`步骤 5：资料已通过。`, 'ok');
-  reportComplete(5, { addPhonePage: Boolean(outcome.addPhonePage) });
+  reportComplete(5, {
+    addPhonePage: Boolean(outcome.addPhonePage),
+    jumpToStep8: Boolean(outcome.jumpToStep8),
+  });
 }

@@ -4984,6 +4984,34 @@ async function handleStepData(step, payload) {
         await setState({ loginVerificationRequestedAt: payload.loginVerificationRequestedAt });
       }
       break;
+    case 5:
+      if (payload.jumpToStep8) {
+        await addLog('步骤 5：收到页面直达 OAuth 授权页信号，开始准备跳过步骤 6、7。', 'info');
+        const latestState = await getState();
+        const statuses = { ...(latestState.stepStatuses || {}) };
+        const skippedSteps = [];
+
+        for (const skippedStep of [6, 7]) {
+          if (!isStepDoneStatus(statuses[skippedStep])) {
+            statuses[skippedStep] = 'skipped';
+            skippedSteps.push(skippedStep);
+          }
+        }
+
+        if (skippedSteps.length) {
+          await setState({ stepStatuses: statuses });
+          for (const skippedStep of skippedSteps) {
+            chrome.runtime.sendMessage({
+              type: 'STEP_STATUS_CHANGED',
+              payload: { step: skippedStep, status: 'skipped' },
+            }).catch(() => { });
+          }
+          await addLog('步骤 5：页面已直接进入 OAuth 授权页，已自动跳过步骤 6、7，准备执行步骤 8。', 'warn');
+        } else {
+          await addLog('步骤 5：页面已在 OAuth 授权页，步骤 6、7 当前无需重复跳过，准备继续步骤 8。', 'info');
+        }
+      }
+      break;
     case 6:
       if (payload.loginVerificationRequestedAt) {
         await setState({ loginVerificationRequestedAt: payload.loginVerificationRequestedAt });
@@ -5773,6 +5801,17 @@ async function runAutoSequenceFromStep(startStep, context = {}) {
 
   let step = Math.max(startStep, 4);
   while (step <= 9) {
+    const currentState = await getState();
+    const currentStatus = currentState.stepStatuses?.[step] || 'pending';
+    if (isStepDoneStatus(currentStatus)) {
+      if (step === 8 && currentStatus === 'skipped') {
+        await addLog('自动运行：步骤 8 已被标记为跳过，当前将继续检查后续步骤。', 'info');
+      }
+      await addLog(`自动运行：步骤 ${step} 当前状态为 ${currentStatus}，已自动跳过并继续后续步骤。`, 'info');
+      step += 1;
+      continue;
+    }
+
     try {
       await executeStepAndWait(step, AUTO_STEP_DELAYS[step]);
       step += 1;
