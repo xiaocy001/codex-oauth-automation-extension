@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>扩展框架模板</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+
+<body>
+  <header>
+    <div class="header-left">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" />
+      </svg>
+      <div class="header-version-block">
+        <div class="header-version-main">
+          <div id="extension-update-status" class="header-version-title">v0.1.0</div>
+          <button id="btn-release-log" class="header-link-btn" type="button">更新日志</button>
+        </div>
+        <span id="extension-version-meta" class="header-version-meta">骨架模板</span>
+      </div>
+    </div>
+    <div class="header-btns">
+      <div class="run-group">
+        <input type="number" id="input-run-count" class="run-count-input" value="1" min="1" max="99" title="运行次数" />
+        <button id="btn-auto-run" class="btn btn-success" title="启动全部步骤">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="5 3 19 12 5 21 5 3" />
+          </svg>
+          启动
+        </button>
+        <button id="btn-stop" class="btn btn-danger" title="停止当前流程">停止</button>
+      </div>
+      <button id="btn-reset" class="btn btn-ghost" title="重置全部步骤">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="1 4 1 10 7 10" />
+          <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+        </svg>
+      </button>
+      <button id="btn-theme" class="theme-toggle" title="切换主题">
+        <svg class="icon-moon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+        </svg>
+        <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="5" />
+          <line x1="12" y1="1" x2="12" y2="3" />
+          <line x1="12" y1="21" x2="12" y2="23" />
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+          <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+          <line x1="1" y1="12" x2="3" y2="12" />
+          <line x1="21" y1="12" x2="23" y2="12" />
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+          <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+        </svg>
+      </button>
+      <div id="config-menu-shell" class="header-menu">
+        <button id="btn-config-menu" class="btn btn-ghost btn-sm header-config-btn" type="button" aria-haspopup="menu" aria-expanded="false">配置</button>
+        <div id="config-menu" class="header-dropdown" role="menu" aria-labelledby="btn-config-menu" hidden>
+          <button id="btn-export-settings" class="header-dropdown-item" type="button" role="menuitem">导出配置</button>
+          <button id="btn-import-settings" class="header-dropdown-item" type="button" role="menuitem">导入配置</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <section id="update-section">
+    <div class="update-card">
+      <div class="section-card-header">
+        <div class="section-mini-copy">
+          <span class="section-label">升级区</span>
+          <div id="update-card-version" class="update-card-version">当前版本 v0.1.0</div>
+        </div>
+        <div class="section-header-actions">
+          <button id="btn-open-release" class="btn btn-primary btn-sm" type="button">刷新</button>
+          <button id="btn-toggle-update" class="btn btn-ghost btn-xs" type="button" aria-expanded="true" aria-controls="update-section-body">收起</button>
+        </div>
+      </div>
+      <div id="update-section-body" class="section-collapse-body">
+        <p id="update-card-summary" class="update-card-summary">这里保留更新展示外壳，后续可接入真实版本检查或发布说明。</p>
+        <div id="update-release-list" class="update-release-list">
+          <div class="release-note-item">当前模板不会主动访问业务平台，可安全作为新项目起点。</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="data-section">
+    <div id="settings-card" class="data-card">
+      <div class="section-card-header">
+        <div class="section-mini-copy">
+          <span class="section-label">配置区</span>
+        </div>
+        <button id="btn-toggle-config" class="btn btn-ghost btn-xs" type="button" aria-expanded="true" aria-controls="data-section-body">收起</button>
+      </div>
+      <div id="data-section-body" class="section-collapse-body">
+        <div class="data-row">
+          <span class="data-label">项目名称</span>
+          <input type="text" id="input-project-name" class="data-input" placeholder="例如：我的扩展项目" />
+        </div>
+        <div class="data-row">
+          <span class="data-label">环境</span>
+          <select id="select-environment" class="data-select">
+            <option value="dev">开发</option>
+            <option value="test">测试</option>
+            <option value="prod">生产</option>
+          </select>
+        </div>
+        <div class="data-row">
+          <span class="data-label">预留开关</span>
+          <label class="option-toggle" for="input-feature-enabled">
+            <input type="checkbox" id="input-feature-enabled" />
+            <span>启用示例功能位</span>
+          </label>
+        </div>
+        <div class="data-row">
+          <span class="data-label">备注</span>
+          <textarea id="input-note" class="data-textarea" placeholder="记录这个骨架后续要扩展的功能方向"></textarea>
+        </div>
+        <div class="data-row">
+          <span class="data-label">状态快照</span>
+          <span id="display-oauth-url" class="data-value mono truncate">等待写入...</span>
+        </div>
+        <div class="data-row">
+          <span class="data-label">最近动作</span>
+          <div class="data-inline data-value-actions">
+            <span id="display-localhost-url" class="data-value data-value-fill mono truncate">尚无动作</span>
+            <button id="btn-save-settings" class="btn btn-outline btn-sm data-inline-btn" type="button">保存</button>
+          </div>
+        </div>
+        <div id="status-bar" class="status-bar">
+          <div class="status-dot"></div>
+          <span id="display-status">就绪</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="steps-section">
+    <div class="steps-header">
+      <span class="section-label">步骤区</span>
+      <span id="steps-progress" class="steps-progress">0 / 9</span>
+    </div>
+    <div class="steps-list">
+      <div class="step-row" data-step="1">
+        <div class="step-indicator" data-step="1"><span class="step-num">1</span></div>
+        <button class="step-btn" data-step="1">步骤 1</button>
+        <span class="step-status" data-step="1"></span>
+      </div>
+      <div class="step-row" data-step="2">
+        <div class="step-indicator" data-step="2"><span class="step-num">2</span></div>
+        <button class="step-btn" data-step="2">步骤 2</button>
+        <span class="step-status" data-step="2"></span>
+      </div>
+      <div class="step-row" data-step="3">
+        <div class="step-indicator" data-step="3"><span class="step-num">3</span></div>
+        <button class="step-btn" data-step="3">步骤 3</button>
+        <span class="step-status" data-step="3"></span>
+      </div>
+      <div class="step-row" data-step="4">
+        <div class="step-indicator" data-step="4"><span class="step-num">4</span></div>
+        <button class="step-btn" data-step="4">步骤 4</button>
+        <span class="step-status" data-step="4"></span>
+      </div>
+      <div class="step-row" data-step="5">
+        <div class="step-indicator" data-step="5"><span class="step-num">5</span></div>
+        <button class="step-btn" data-step="5">步骤 5</button>
+        <span class="step-status" data-step="5"></span>
+      </div>
+      <div class="step-row" data-step="6">
+        <div class="step-indicator" data-step="6"><span class="step-num">6</span></div>
+        <button class="step-btn" data-step="6">步骤 6</button>
+        <span class="step-status" data-step="6"></span>
+      </div>
+      <div class="step-row" data-step="7">
+        <div class="step-indicator" data-step="7"><span class="step-num">7</span></div>
+        <button class="step-btn" data-step="7">步骤 7</button>
+        <span class="step-status" data-step="7"></span>
+      </div>
+      <div class="step-row" data-step="8">
+        <div class="step-indicator" data-step="8"><span class="step-num">8</span></div>
+        <button class="step-btn" data-step="8">步骤 8</button>
+        <span class="step-status" data-step="8"></span>
+      </div>
+      <div class="step-row" data-step="9">
+        <div class="step-indicator" data-step="9"><span class="step-num">9</span></div>
+        <button class="step-btn" data-step="9">步骤 9</button>
+        <span class="step-status" data-step="9"></span>
+      </div>
+    </div>
+  </section>
+
+  <section id="log-section">
+    <div class="log-header">
+      <span class="section-label">日志区</span>
+      <button id="btn-clear-log" class="btn btn-ghost btn-xs" title="清空日志">清空</button>
+    </div>
+    <div id="log-area"></div>
+  </section>
+
+  <div id="toast-container"></div>
+  <input id="input-import-settings-file" type="file" accept=".json,application/json" hidden />
+  <script src="sidepanel.js"></script>
+</body>
+
+</html>

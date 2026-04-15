@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "扩展框架模板",
+  "version": "0.1.0",
+  "description": "保留启动区、升级区、配置区、步骤区、日志区的 MV3 Side Panel 扩展骨架。",
+  "permissions": [
+    "sidePanel",
+    "storage"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "sidepanel/sidepanel.html"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
