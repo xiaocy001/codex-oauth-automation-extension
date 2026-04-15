@@ -3931,7 +3931,7 @@ function getLoginAuthStateLabel(state) {
 
 function isRestartCurrentAttemptError(error) {
   const message = String(typeof error === 'string' ? error : error?.message || '');
-  return /当前邮箱已存在，需要重新开始新一轮/.test(message);
+  return /当前邮箱已存在，需要重新开始新一轮|AUTO_EMAIL_RESTART::/i.test(message);
 }
 
 function isStep9RecoverableAuthError(error) {
@@ -5907,20 +5907,8 @@ async function ensureAutoEmailReady(targetRun, totalRuns, attemptRuns) {
   }
 
   await addLog(`${generatorLabel}自动获取已连续失败 ${EMAIL_FETCH_MAX_ATTEMPTS} 次：${lastError?.message || '未知错误'}`, 'error');
-  await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮已暂停：请先自动获取邮箱或手动粘贴邮箱，然后继续 ===`, 'warn');
-  await broadcastAutoRunStatus('waiting_email', {
-    currentRun: targetRun,
-    totalRuns,
-    attemptRun: attemptRuns,
-  });
-
-  await waitForResume();
-
-  const resumedState = await getState();
-  if (!resumedState.email) {
-    throw new Error('无法继续：当前没有邮箱地址。');
-  }
-  return resumedState.email;
+  await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮自动获取邮箱失败，准备回到步骤 1 重新开始本次流程 ===`, 'warn');
+  throw new Error(`AUTO_EMAIL_RESTART::${generatorLabel}自动获取已连续失败 ${EMAIL_FETCH_MAX_ATTEMPTS} 次：${lastError?.message || '未知错误'}`);
 }
 
 async function runAutoSequenceFromStep(startStep, context = {}) {
@@ -6397,8 +6385,11 @@ async function autoRunLoop(totalRuns, options = {}) {
         }
 
         const reason = getErrorMessage(err);
+        const restartCurrentAttempt = isRestartCurrentAttemptError(err);
         roundSummary.failureReasons.push(reason);
-        const canRetry = autoRunSkipFailures && attemptRun < maxAttemptsForRound;
+        const canRetry = restartCurrentAttempt
+          ? attemptRun < (AUTO_RUN_MAX_RETRIES_PER_ROUND + 1)
+          : (autoRunSkipFailures && attemptRun < maxAttemptsForRound);
 
         await setState({
           autoRunRoundSummaries: serializeAutoRunRoundSummaries(totalRuns, roundSummaries),
@@ -6406,7 +6397,7 @@ async function autoRunLoop(totalRuns, options = {}) {
 
         if (canRetry) {
           const retryIndex = attemptRun;
-          if (isRestartCurrentAttemptError(err)) {
+          if (restartCurrentAttempt) {
             await addLog(`第 ${targetRun}/${totalRuns} 轮第 ${attemptRun} 次尝试需要整轮重开：${reason}`, 'warn');
           } else {
             await addLog(`第 ${targetRun}/${totalRuns} 轮第 ${attemptRun} 次尝试失败：${reason}`, 'error');
