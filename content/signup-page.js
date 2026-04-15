@@ -1073,10 +1073,19 @@ async function waitForVerificationSubmitOutcome(step, timeout) {
 }
 
 async function fillVerificationCode(step, payload) {
-  const { code } = payload;
+  const { code, password = '' } = payload;
   if (!code) throw new Error('未提供验证码。');
 
   log(`步骤 ${step}：正在填写验证码：${code}`);
+
+  if (step === 4) {
+    log('步骤 4：填写验证码前，先确认当前页面仍可输入验证码。', 'info');
+    const prepareResult = await prepareSignupVerificationFlow({ password }, 20000);
+    if (prepareResult?.alreadyVerified) {
+      log('步骤 4：页面已在验证码后的下一阶段，本次验证码填写按已完成处理。', 'ok');
+      return { success: true, alreadyVerified: true };
+    }
+  }
 
   if (step === 7) {
     await waitForLoginVerificationPageReady();

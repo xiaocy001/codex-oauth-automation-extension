@@ -6763,6 +6763,37 @@ async function requestVerificationCodeResend(step) {
     throw new Error(result.error);
   }
 
+  if (step === 4) {
+    const currentState = await getState();
+    const password = currentState.password || currentState.customPassword || '';
+    await addLog('步骤 4：重发成功，立即重新校验验证码页面是否就绪...', 'info');
+
+    const prepareResult = await sendToContentScriptResilient(
+      'signup-page',
+      {
+        type: 'PREPARE_SIGNUP_VERIFICATION',
+        step: 4,
+        source: 'background',
+        payload: { password },
+      },
+      {
+        timeoutMs: 30000,
+        retryDelayMs: 700,
+        logMessage: '步骤 4：重发后页面正在刷新或切换，等待验证码页重新就绪...',
+      }
+    );
+
+    if (prepareResult && prepareResult.error) {
+      throw new Error(prepareResult.error);
+    }
+
+    if (prepareResult?.alreadyVerified) {
+      await addLog('步骤 4：重发后页面已直接进入下一阶段，本轮验证码步骤按已完成处理。', 'ok');
+    } else {
+      await addLog('步骤 4：重发后验证码页面已重新就绪。', 'ok');
+    }
+  }
+
   const requestedAt = Date.now();
   if (step === 7) {
     await setState({ loginVerificationRequestedAt: requestedAt });
@@ -7001,12 +7032,17 @@ async function submitVerificationCode(step, code) {
     throw new Error('认证页面标签页已关闭，无法填写验证码。');
   }
 
+  const currentState = await getState();
+  const password = step === 4
+    ? (currentState.password || currentState.customPassword || '')
+    : '';
+
   await chrome.tabs.update(signupTabId, { active: true });
   const result = await sendToContentScript('signup-page', {
     type: 'FILL_CODE',
     step,
     source: 'background',
-    payload: { code },
+    payload: { code, password },
   });
 
   if (result && result.error) {
