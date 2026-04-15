@@ -19,6 +19,7 @@ const SCRIPT_SOURCE = (() => {
 const LOG_PREFIX = `[MultiPage:${SCRIPT_SOURCE}]`;
 const STOP_ERROR_MESSAGE = '流程已被用户停止。';
 let flowStopped = false;
+const WAIT_FOR_ELEMENT_REFRESH_MARKER_PREFIX = '__MULTIPAGE_WAIT_FOR_ELEMENT_REFRESH__:';
 
 if (!window.__MULTIPAGE_UTILS_LISTENER_READY__) {
   window.__MULTIPAGE_UTILS_LISTENER_READY__ = true;
@@ -58,58 +59,47 @@ function throwIfStopped() {
  * Wait for a DOM element to appear.
  * @param {string} selector - CSS selector
  * @param {number} timeout - Max wait time in ms (default 10000)
+ * @param {boolean} refreshOnMiss - When true, auto-reload once and retry after page load
  * @returns {Promise<Element>}
  */
-function waitForElement(selector, timeout = 10000) {
+function getWaitForElementRefreshMarkerKey(selector) {
+  const pageKey = `${location.origin || ''}${location.pathname || ''}${location.search || ''}`;
+  return `${WAIT_FOR_ELEMENT_REFRESH_MARKER_PREFIX}${encodeURIComponent(`${pageKey}::${selector}`)}`;
+}
+
+function waitForPageLoadComplete(timeout = 30000) {
   return new Promise((resolve, reject) => {
     throwIfStopped();
 
-    const existing = document.querySelector(selector);
-    if (existing) {
-      console.log(LOG_PREFIX, `立即找到元素: ${selector}`);
-      log(`已找到元素：${selector}`);
-      resolve(existing);
+    if (document.readyState === 'complete') {
+      resolve();
       return;
     }
-
-    console.log(LOG_PREFIX, `等待元素: ${selector}（超时 ${timeout}ms）`);
-    log(`正在等待选择器：${selector}...`);
 
     let settled = false;
     let stopTimer = null;
     const cleanup = () => {
       if (settled) return;
       settled = true;
-      observer.disconnect();
       clearTimeout(timer);
       clearTimeout(stopTimer);
+      window.removeEventListener('load', handleReady);
+      document.removeEventListener('readystatechange', handleReady);
     };
 
-    const observer = new MutationObserver(() => {
-      if (flowStopped) {
+    const handleReady = () => {
+      if (document.readyState === 'complete') {
         cleanup();
-        reject(new Error(STOP_ERROR_MESSAGE));
-        return;
+        resolve();
       }
-      const el = document.querySelector(selector);
-      if (el) {
-        cleanup();
-        console.log(LOG_PREFIX, `等待后找到元素: ${selector}`);
-        log(`已找到元素：${selector}`);
-        resolve(el);
-      }
-    });
+    };
 
-    observer.observe(document.body || document.documentElement, {
-      childList: true,
-      subtree: true,
-    });
+    window.addEventListener('load', handleReady);
+    document.addEventListener('readystatechange', handleReady);
 
     const timer = setTimeout(() => {
       cleanup();
-      const msg = `在 ${location.href} 等待 ${selector} 超时，已超过 ${timeout}ms`;
-      console.error(LOG_PREFIX, msg);
-      reject(new Error(msg));
+      reject(new Error(`等待页面加载完成超时，已超过 ${timeout}ms。URL: ${location.href}`));
     }, timeout);
 
     const pollStop = () => {
@@ -122,7 +112,112 @@ function waitForElement(selector, timeout = 10000) {
       stopTimer = setTimeout(pollStop, 100);
     };
     pollStop();
+    handleReady();
   });
+}
+
+function waitForElement(selector, timeout = 10000, refreshOnMiss = false) {
+  return (async () => {
+    throwIfStopped();
+
+    const refreshMarkerKey = refreshOnMiss ? getWaitForElementRefreshMarkerKey(selector) : '';
+    let alreadyRefreshedForSelector = false;
+
+    if (refreshOnMiss && refreshMarkerKey) {
+      try {
+        alreadyRefreshedForSelector = sessionStorage.getItem(refreshMarkerKey) === '1';
+        if (alreadyRefreshedForSelector) {
+          sessionStorage.removeItem(refreshMarkerKey);
+          console.warn(LOG_PREFIX, `检测到页面已为选择器刷新过，等待加载完成后重新查找: ${selector}`);
+          log(`页面刷新完成，正在重新查找元素：${selector}...`, 'warn');
+          await waitForPageLoadComplete(Math.max(30000, timeout));
+        }
+      } catch (err) {
+        console.warn(LOG_PREFIX, `读取 waitForElement 刷新标记失败: ${err?.message || err}`);
+      }
+    }
+
+    return new Promise((resolve, reject) => {
+      const existing = document.querySelector(selector);
+      if (existing) {
+        console.log(LOG_PREFIX, `立即找到元素: ${selector}`);
+        log(`已找到元素：${selector}`);
+        resolve(existing);
+        return;
+      }
+
+      console.log(LOG_PREFIX, `等待元素: ${selector}（超时 ${timeout}ms）`);
+      log(`正在等待选择器：${selector}...`);
+
+      let settled = false;
+      let stopTimer = null;
+      const cleanup = () => {
+        if (settled) return;
+        settled = true;
+        observer.disconnect();
+        clearTimeout(timer);
+        clearTimeout(stopTimer);
+      };
+
+      const observer = new MutationObserver(() => {
+        if (flowStopped) {
+          cleanup();
+          reject(new Error(STOP_ERROR_MESSAGE));
+          return;
+        }
+        const el = document.querySelector(selector);
+        if (el) {
+          cleanup();
+          console.log(LOG_PREFIX, `等待后找到元素: ${selector}`);
+          log(`已找到元素：${selector}`);
+          resolve(el);
+        }
+      });
+
+      observer.observe(document.body || document.documentElement, {
+        childList: true,
+        subtree: true,
+      });
+
+      const timer = setTimeout(() => {
+        cleanup();
+        const msg = `在 ${location.href} 等待 ${selector} 超时，已超过 ${timeout}ms`;
+
+        if (refreshOnMiss && !alreadyRefreshedForSelector) {
+          try {
+            sessionStorage.setItem(refreshMarkerKey, '1');
+          } catch (err) {
+            console.warn(LOG_PREFIX, `写入 waitForElement 刷新标记失败: ${err?.message || err}`);
+          }
+
+          console.warn(LOG_PREFIX, `${msg}；准备刷新当前页面后重试。`);
+          log(`等待元素超时：${selector}，准备刷新当前页面后重试。`, 'warn');
+          setTimeout(() => {
+            try {
+              location.reload();
+            } catch (err) {
+              console.error(LOG_PREFIX, `刷新页面失败: ${err?.message || err}`);
+            }
+          }, 0);
+          return;
+        }
+
+        console.error(LOG_PREFIX, msg);
+        reject(new Error(msg));
+      }, timeout);
+
+      const pollStop = () => {
+        if (settled) return;
+        if (flowStopped) {
+          cleanup();
+          reject(new Error(STOP_ERROR_MESSAGE));
+          return;
+        }
+        stopTimer = setTimeout(pollStop, 100);
+      };
+      pollStop();
+    });
+  })();
 }
 
 /**

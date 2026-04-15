@@ -27,7 +27,8 @@ async function fetchDuckEmail(payload = {}) {
 
   await waitForElement(
     'input.AutofillSettingsPanel__PrivateDuckAddressValue, button.AutofillSettingsPanel__GeneratorButton',
-    15000
+    15000,
+    true
   );
 
   const GENERATE_BUTTON_PATTERN = /generate\s+private\s+duck\s+address|new\s+private\s+duck\s+address|generate\s+new|new\s+address|生成.*duck.*地址|生成.*私有.*地址|生成.*地址|新.*地址/i;
