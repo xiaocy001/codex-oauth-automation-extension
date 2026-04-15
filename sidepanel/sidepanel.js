@@ -64,6 +64,7 @@ const rowSub2ApiPassword = document.getElementById('row-sub2api-password');
 const inputSub2ApiPassword = document.getElementById('input-sub2api-password');
 const rowSub2ApiGroup = document.getElementById('row-sub2api-group');
 const inputSub2ApiGroup = document.getElementById('input-sub2api-group');
+const inputStopWebhookUrl = document.getElementById('input-stop-webhook-url');
 const selectMailProvider = document.getElementById('select-mail-provider');
 const btnMailLogin = document.getElementById('btn-mail-login');
 const rowMail2925Mode = document.getElementById('row-mail-2925-mode');
@@ -1090,6 +1091,7 @@ function collectSettingsPayload() {
     panelMode: selectPanelMode.value,
     vpsUrl: inputVpsUrl.value.trim(),
     vpsPassword: inputVpsPassword.value,
+    stopWebhookUrl: inputStopWebhookUrl.value.trim(),
     localCpaStep9Mode: getSelectedLocalCpaStep9Mode(),
     sub2apiUrl: inputSub2ApiUrl.value.trim(),
     sub2apiEmail: inputSub2ApiEmail.value.trim(),
@@ -1412,6 +1414,7 @@ function applySettingsState(state) {
   inputSub2ApiEmail.value = state?.sub2apiEmail || '';
   inputSub2ApiPassword.value = state?.sub2apiPassword || '';
   inputSub2ApiGroup.value = state?.sub2apiGroupName || '';
+  inputStopWebhookUrl.value = state?.stopWebhookUrl || '';
   const restoredMailProvider = isCustomMailProvider(state?.mailProvider)
     || ['hotmail-api', 'luckmail-api', '163', '163-vip', 'qq', 'inbucket', '2925', 'cloudflare-temp-email'].includes(String(state?.mailProvider || '').trim())
     ? String(state?.mailProvider || '163').trim()
@@ -4221,6 +4224,14 @@ inputVpsPassword.addEventListener('input', () => {
   scheduleSettingsAutoSave();
 });
 inputVpsPassword.addEventListener('blur', () => {
+  saveSettings({ silent: true }).catch(() => { });
+});
+
+inputStopWebhookUrl.addEventListener('input', () => {
+  markSettingsDirty(true);
+  scheduleSettingsAutoSave();
+});
+inputStopWebhookUrl.addEventListener('blur', () => {
   saveSettings({ silent: true }).catch(() => { });
 });
 

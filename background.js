@@ -168,6 +168,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   panelMode: 'cpa',
   vpsUrl: '',
   vpsPassword: '',
+  stopWebhookUrl: '',
   localCpaStep9Mode: DEFAULT_LOCAL_CPA_STEP9_MODE,
   sub2apiUrl: DEFAULT_SUB2API_URL,
   sub2apiEmail: '',
@@ -648,6 +649,8 @@ function normalizePersistentSettingValue(key, value) {
       return String(value || '').trim();
     case 'vpsPassword':
       return String(value || '');
+    case 'stopWebhookUrl':
+      return String(value || '').trim();
     case 'localCpaStep9Mode':
       return normalizeLocalCpaStep9Mode(value);
     case 'sub2apiUrl':
@@ -5235,6 +5238,11 @@ async function requestStop(options = {}) {
         ? false
         : (options.logMessage || '已取消自动运行倒计时计划。'),
     });
+    await notifyStopWebhook({
+      reason: 'cancel_scheduled_start',
+      message: options.logMessage || '已取消自动运行倒计时计划。',
+      state,
+    });
     return;
   }
 
@@ -5257,6 +5265,12 @@ async function requestStop(options = {}) {
     });
     await clearAutoRunTimerAlarm();
     clearStopRequest();
+    await notifyStopWebhook({
+      reason: 'stop_waiting_auto_run',
+      message: options.logMessage || '已停止等待中的自动流程。',
+      state,
+      timerPlan,
+    });
     return;
   }
 
@@ -5290,6 +5304,152 @@ async function requestStop(options = {}) {
     autoRunTimerPlan: null,
     scheduledAutoRunPlan: null,
   });
+
+  await notifyStopWebhook({
+    reason: 'manual_stop',
+    message: logMessage,
+    state,
+  });
+}
+
+function isFeishuWebhookUrl(rawValue = '') {
+  try {
+    const parsed = new URL(String(rawValue || '').trim());
+    return (
+      (parsed.hostname === 'open.feishu.cn' || parsed.hostname === 'open.larksuite.com')
+      && /\/open-apis\/bot\/v2\/hook\//i.test(parsed.pathname || '')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function formatStopWebhookText(payload = {}) {
+  const lines = [
+    '多页面自动化流程已停止',
+    `原因：${payload.reason || 'manual_stop'}`,
+    `说明：${payload.message || '流程已停止'}`,
+    `时间：${payload.stoppedAt || ''}`,
+    `当前步骤：${payload.currentStep || 0}`,
+    `轮次：${payload.currentRun || 0}/${payload.totalRuns || 0}`,
+    `尝试次数：${payload.attemptRun || 0}`,
+    `自动状态：${payload.autoRunning ? '运行中' : '未运行'} / ${payload.autoRunPhase || 'idle'}`,
+  ];
+
+  if (payload.email) {
+    lines.push(`邮箱：${payload.email}`);
+  }
+  if (payload.localhostUrl) {
+    lines.push(`回调地址：${payload.localhostUrl}`);
+  }
+  if (payload.timerPlan?.kind) {
+    lines.push(`计划类型：${payload.timerPlan.kind}`);
+  }
+
+  return lines.join('\n');
+}
+
+function buildStopWebhookRequest(webhookUrl, payload) {
+  if (isFeishuWebhookUrl(webhookUrl)) {
+    return {
+      provider: 'feishu',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        msg_type: 'text',
+        content: {
+          text: formatStopWebhookText(payload),
+        },
+      }),
+    };
+  }
+
+  return {
+    provider: 'generic',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  };
+}
+
+function parseStopWebhookSuccess(provider, responseText = '') {
+  if (provider !== 'feishu') {
+    return;
+  }
+
+  let parsed = null;
+  try {
+    parsed = responseText ? JSON.parse(responseText) : null;
+  } catch {
+    throw new Error('飞书 webhook 返回了无法解析的响应内容。');
+  }
+
+  const code = Number(parsed?.code ?? 0);
+  if (!Number.isFinite(code) || code !== 0) {
+    throw new Error(String(parsed?.msg || parsed?.message || `飞书 webhook 返回错误码 ${code}`));
+  }
+}
+
+async function notifyStopWebhook(options = {}) {
+  const currentState = options.state || await getState();
+  const webhookUrl = String(currentState.stopWebhookUrl || '').trim();
+  if (!webhookUrl) {
+    return false;
+  }
+
+  const payload = {
+    event: 'flow_stopped',
+    reason: String(options.reason || 'manual_stop'),
+    message: String(options.message || '流程已停止'),
+    stoppedAt: new Date().toISOString(),
+    currentStep: Number(currentState.currentStep) || 0,
+    currentRun: Number(currentState.autoRunCurrentRun) || autoRunCurrentRun || 0,
+    totalRuns: Number(currentState.autoRunTotalRuns) || autoRunTotalRuns || 0,
+    attemptRun: Number(currentState.autoRunAttemptRun) || autoRunAttemptRun || 0,
+    autoRunning: Boolean(currentState.autoRunning),
+    autoRunPhase: String(currentState.autoRunPhase || ''),
+    email: String(currentState.email || ''),
+    oauthUrl: String(currentState.oauthUrl || ''),
+    localhostUrl: String(currentState.localhostUrl || ''),
+    timerPlan: options.timerPlan ? {
+      kind: String(options.timerPlan.kind || ''),
+      currentRun: Number(options.timerPlan.currentRun) || 0,
+      totalRuns: Number(options.timerPlan.totalRuns) || 0,
+      attemptRun: Number(options.timerPlan.attemptRun) || 0,
+    } : null,
+  };
+
+  try {
+    const request = buildStopWebhookRequest(webhookUrl, payload);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(new Error('timeout')), 10000);
+    try {
+      const response = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: request.headers,
+        body: request.body,
+        signal: controller.signal,
+      });
+
+      const responseText = await response.text().catch(() => '');
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      parseStopWebhookSuccess(request.provider, responseText);
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    await addLog(`停止通知 webhook 已发送（${request.provider === 'feishu' ? '飞书' : '通用'}）。`, 'ok');
+    return true;
+  } catch (err) {
+    await addLog(`停止通知 webhook 发送失败：${err.message || err}`, 'warn');
+    return false;
+  }
 }
 
 // ============================================================
@@ -6056,6 +6216,12 @@ async function handleAutoRunLoopUnhandledError(error) {
     autoRunTimerPlan: null,
     scheduledAutoRunPlan: null,
   });
+  if (!stopRequested) {
+    await notifyStopWebhook({
+      reason: 'auto_run_crashed',
+      message: `自动运行异常终止：${getErrorMessage(error) || '未知错误'}`,
+    });
+  }
   clearStopRequest();
 }
 
@@ -6379,6 +6545,12 @@ async function autoRunLoop(totalRuns, options = {}) {
       totalRuns: autoRunTotalRuns,
       attemptRun: autoRunAttemptRun,
     });
+    if (!stopRequested && stoppedEarly) {
+      await notifyStopWebhook({
+        reason: 'auto_run_stopped',
+        message: `自动运行已停止，完成 ${successfulRuns}/${autoRunTotalRuns} 轮。`,
+      });
+    }
   } else {
     await addLog(`=== 全部 ${autoRunTotalRuns} 轮已执行完成，成功 ${successfulRuns} 轮 ===`, 'ok');
     await broadcastAutoRunStatus('complete', {
