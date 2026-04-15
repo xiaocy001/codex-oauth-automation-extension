@@ -77,17 +77,6 @@ function normalizeMinuteTimestamp(timestamp) {
   return date.getTime();
 }
 
-function extractEmails(text) {
-  const matches = String(text || '').match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig) || [];
-  return [...new Set(matches.map((item) => item.toLowerCase()))];
-}
-
-function emailMatchesTarget(candidate, targetEmail) {
-  const normalizedCandidate = String(candidate || '').trim().toLowerCase();
-  const normalizedTarget = String(targetEmail || '').trim().toLowerCase();
-  return Boolean(normalizedCandidate && normalizedTarget && normalizedCandidate === normalizedTarget);
-}
-
 function getTargetEmailMatchState(text, targetEmail) {
   const normalizedTarget = String(targetEmail || '').trim().toLowerCase();
   if (!normalizedTarget) {
@@ -106,16 +95,7 @@ function getTargetEmailMatchState(text, targetEmail) {
       return { matches: true, hasExplicitEmail: true };
     }
   }
-
-  const emails = extractEmails(text);
-  if (!emails.length) {
-    return { matches: false, hasExplicitEmail: false };
-  }
-
-  return {
-    matches: emails.some((email) => emailMatchesTarget(email, normalizedTarget)),
-    hasExplicitEmail: true,
-  };
+  return { matches: false, hasExplicitEmail: false };
 }
 
 const MONTH_INDEX_MAP = {
@@ -528,13 +508,8 @@ async function handlePollEmail(step, payload) {
       }
 
       const previewTargetState = getTargetEmailMatchState(preview.combinedText, targetEmail);
-      const previewEmails = extractEmails(preview.combinedText);
-      if (targetEmail && previewEmails.length > 0 && !previewTargetState.matches) {
-        continue;
-      }
-
       const previewCode = extractVerificationCode(preview.combinedText);
-      if (previewCode && previewTargetState.matches) {
+      if (previewCode) {
         if (excludedCodeSet.has(previewCode)) {
           log(`步骤 ${step}：跳过排除的验证码：${previewCode}`, 'info');
           continue;
@@ -547,7 +522,8 @@ async function handlePollEmail(step, payload) {
         persistSeenCodes();
         const source = useFallback && existingMailIds.has(rowId) ? '回退匹配邮件' : '新邮件';
         const timeLabel = rowTimestamp ? `，时间：${new Date(rowTimestamp).toLocaleString('zh-CN', { hour12: false })}` : '';
-        log(`步骤 ${step}：已在 Gmail 找到验证码：${previewCode}（来源：${source}${timeLabel}）`, 'ok');
+        const targetLabel = previewTargetState.matches ? '，目标邮箱命中' : '';
+        log(`步骤 ${step}：已在 Gmail 找到验证码：${previewCode}（来源：${source}${timeLabel}${targetLabel}）`, 'ok');
         return {
           ok: true,
           code: previewCode,
@@ -558,10 +534,6 @@ async function handlePollEmail(step, payload) {
 
       const openedText = await openRowAndGetMessageText(row);
       const openedTargetState = getTargetEmailMatchState(openedText, targetEmail);
-      if (targetEmail && openedTargetState.hasExplicitEmail && !openedTargetState.matches) {
-        continue;
-      }
-
       const bodyCode = extractVerificationCode(openedText);
       if (!bodyCode) {
         continue;
@@ -578,7 +550,8 @@ async function handlePollEmail(step, payload) {
       persistSeenCodes();
       const source = useFallback && existingMailIds.has(rowId) ? '回退匹配邮件正文' : '新邮件正文';
       const timeLabel = rowTimestamp ? `，时间：${new Date(rowTimestamp).toLocaleString('zh-CN', { hour12: false })}` : '';
-      log(`步骤 ${step}：已在 Gmail 正文中找到验证码：${bodyCode}（来源：${source}${timeLabel}）`, 'ok');
+      const targetLabel = openedTargetState.matches ? '，目标邮箱命中' : '';
+      log(`步骤 ${step}：已在 Gmail 正文中找到验证码：${bodyCode}（来源：${source}${timeLabel}${targetLabel}）`, 'ok');
       return {
         ok: true,
         code: bodyCode,
