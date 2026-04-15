@@ -2605,8 +2605,8 @@ function updateMailProviderUI() {
   inputEmail.placeholder = useHotmail
     ? '由 Hotmail 账号池自动分配'
     : (useLuckmail
-      ? '步骤 3 自动购买 LuckMail 邮箱并回填'
-      : (useGeneratedAlias ? '步骤 3 自动生成 2925 邮箱并回填' : uiCopy.placeholder));
+      ? '步骤 1 自动购买 LuckMail 邮箱并回填'
+      : (useGeneratedAlias ? '步骤 1 自动生成 2925 邮箱并回填' : uiCopy.placeholder));
   btnFetchEmail.disabled = useGeneratedAlias || useLuckmail || useCustomEmail || isAutoRunLockedPhase();
   if (!btnFetchEmail.disabled) {
     btnFetchEmail.textContent = uiCopy.buttonLabel;
@@ -2615,10 +2615,10 @@ function updateMailProviderUI() {
     autoHintText.textContent = useHotmail
       ? '请先校验并选择一个 Hotmail 账号'
       : (useLuckmail
-        ? '步骤 3 会自动购买 LuckMail 邮箱并用于收码'
+        ? '步骤 1 会自动购买 LuckMail 邮箱并用于收码'
       : (useGeneratedAlias
-        ? '步骤 3 会自动生成邮箱，无需手动获取'
-        : (useCustomEmail ? '请先填写自定义注册邮箱，成功一轮后会自动清空' : `先自动获取${uiCopy.label}，或手动粘贴邮箱后再继续`)));
+        ? '步骤 1 会自动生成邮箱，无需手动获取'
+        : (useCustomEmail ? '请先填写自定义注册邮箱，成功一轮后会自动清空' : `先获取${uiCopy.label}，或手动粘贴邮箱后再继续`)));
   }
   if (useHotmail) {
     inputEmail.value = getCurrentHotmailEmail();
@@ -3572,40 +3572,19 @@ document.querySelectorAll('.step-btn').forEach(btn => {
           });
           syncLatestState({ customPassword: inputPassword.value });
         }
-        let email = inputEmail.value.trim();
-        if (selectMailProvider.value === 'hotmail-api' || isLuckmailProvider()) {
-          const response = await chrome.runtime.sendMessage({ type: 'EXECUTE_STEP', source: 'sidepanel', payload: { step } });
-          if (response?.error) {
-            throw new Error(response.error);
-          }
-        } else if (usesGeneratedAliasMailProvider(selectMailProvider.value)) {
-          const emailPrefix = inputEmailPrefix.value.trim();
-          if (!emailPrefix) {
-            showToast('请先填写 2925 邮箱前缀。', 'warn');
-            return;
-          }
-          const response = await chrome.runtime.sendMessage({ type: 'EXECUTE_STEP', source: 'sidepanel', payload: { step, emailPrefix } });
-          if (response?.error) {
-            throw new Error(response.error);
-          }
-        } else {
-          let email = inputEmail.value.trim();
-          if (!email) {
-            if (isCustomMailProvider()) {
-              showToast('当前邮箱服务为自定义邮箱，请先填写注册邮箱后再执行第 3 步。', 'warn');
-              return;
-            }
-            try {
-              email = await fetchGeneratedEmail({ showFailureToast: false });
-            } catch (err) {
-              showToast(`自动获取失败：${err.message}，请手动粘贴邮箱后重试。`, 'warn');
-              return;
-            }
-          }
-          const response = await chrome.runtime.sendMessage({ type: 'EXECUTE_STEP', source: 'sidepanel', payload: { step, email } });
-          if (response?.error) {
-            throw new Error(response.error);
-          }
+        const email = inputEmail.value.trim();
+        if (!email) {
+          showToast(
+            isCustomMailProvider()
+              ? '请先填写注册邮箱并完成第 1 步，再执行第 3 步。'
+              : '请先完成第 1 步获取邮箱，再执行第 3 步。',
+            'warn'
+          );
+          return;
+        }
+        const response = await chrome.runtime.sendMessage({ type: 'EXECUTE_STEP', source: 'sidepanel', payload: { step, email } });
+        if (response?.error) {
+          throw new Error(response.error);
         }
       } else {
         const response = await chrome.runtime.sendMessage({ type: 'EXECUTE_STEP', source: 'sidepanel', payload: { step } });

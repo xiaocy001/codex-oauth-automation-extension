@@ -100,7 +100,7 @@ const HOTMAIL_MAILBOXES = ['INBOX', 'Junk'];
 const STOP_ERROR_MESSAGE = '流程已被用户停止。';
 const HUMAN_STEP_DELAY_MIN = 700;
 const HUMAN_STEP_DELAY_MAX = 2200;
-const STEP7_MAIL_POLLING_RECOVERY_MAX_ATTEMPTS = 8;
+const STEP7_MAIL_POLLING_RECOVERY_MAX_ATTEMPTS = 20;
 const SUB2API_STEP1_RESPONSE_TIMEOUT_MS = 90000;
 const SUB2API_STEP9_RESPONSE_TIMEOUT_MS = 120000;
 const DEFAULT_SUB2API_URL = 'https://sub2api.hisence.fun/admin/accounts';
@@ -2455,7 +2455,7 @@ async function resolveLuckmailVerificationMail(client, token, filters = {}, toke
 async function pollLuckmailVerificationCode(step, state, pollPayload = {}) {
   const purchase = getCurrentLuckmailPurchase(state);
   if (!purchase?.token) {
-    throw new Error('LuckMail 当前没有可用 token，请先执行步骤 3 购买邮箱。');
+    throw new Error('LuckMail 当前没有可用 token，请先执行步骤 1 获取邮箱。');
   }
 
   const client = createLuckmailClient(state);
@@ -5545,6 +5545,62 @@ async function fetchGeneratedEmail(state, options = {}) {
   return fetchDuckEmail(options);
 }
 
+async function ensureRegistrationEmailReadyForStep1(state, options = {}) {
+  const currentState = state || await getState();
+  if (currentState.email) {
+    return currentState.email;
+  }
+
+  const currentRun = Number.isInteger(options.currentRun) && options.currentRun > 0
+    ? options.currentRun
+    : Math.max(1, Number(currentState.autoRunCurrentRun) || autoRunCurrentRun || 1);
+  const totalRuns = Number.isInteger(options.totalRuns) && options.totalRuns > 0
+    ? options.totalRuns
+    : Math.max(1, Number(currentState.autoRunTotalRuns) || autoRunTotalRuns || 1);
+  const attemptRun = Number.isInteger(options.attemptRun) && options.attemptRun > 0
+    ? options.attemptRun
+    : Math.max(1, Number(currentState.autoRunAttemptRun) || autoRunAttemptRun || 1);
+
+  if (options.allowAutoWait || currentState.autoRunning) {
+    return ensureAutoEmailReady(currentRun, totalRuns, attemptRun);
+  }
+
+  if (isHotmailProvider(currentState)) {
+    const account = await ensureHotmailAccountForFlow({
+      allowAllocate: true,
+      markUsed: true,
+      preferredAccountId: currentState.currentHotmailAccountId || null,
+    });
+    await addLog(`步骤 1：已分配 Hotmail 邮箱 ${account.email}`, 'ok');
+    return account.email;
+  }
+
+  if (isLuckmailProvider(currentState)) {
+    const purchase = await ensureLuckmailPurchaseForFlow({ allowReuse: true });
+    await addLog(`步骤 1：LuckMail 邮箱已就绪：${purchase.email_address}`, 'ok');
+    return purchase.email_address;
+  }
+
+  if (isGeneratedAliasProvider(currentState)) {
+    const generatedEmail = buildGeneratedAliasEmail(currentState);
+    await setEmailState(generatedEmail);
+    await addLog(`步骤 1：已生成注册邮箱 ${generatedEmail}`, 'ok');
+    return generatedEmail;
+  }
+
+  if (shouldUseCustomRegistrationEmail(currentState)) {
+    throw new Error('缺少邮箱地址，请先在侧边栏填写注册邮箱后再执行步骤 1。');
+  }
+
+  const generator = normalizeEmailGenerator(currentState.emailGenerator);
+  const generatedEmail = await fetchGeneratedEmail(currentState, {
+    generateNew: true,
+    generator,
+  });
+  await addLog(`步骤 1：${getEmailGeneratorLabel(generator)}已就绪：${generatedEmail}`, 'ok');
+  return generatedEmail;
+}
+
 // ============================================================
 // Auto Run Flow
 // ============================================================
@@ -5589,6 +5645,10 @@ async function resumeAutoRunIfWaitingForEmail(options = {}) {
 
 async function ensureAutoEmailReady(targetRun, totalRuns, attemptRuns) {
   const currentState = await getState();
+  if (currentState.email) {
+    return currentState.email;
+  }
+
   if (isHotmailProvider(currentState)) {
     const account = await ensureHotmailAccountForFlow({
       allowAllocate: true,
@@ -5609,12 +5669,10 @@ async function ensureAutoEmailReady(targetRun, totalRuns, attemptRuns) {
     if (!currentState.emailPrefix) {
       throw new Error('2925 邮箱前缀未设置，请先在侧边栏填写。');
     }
-    await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：2925 模式已启用，将在步骤 3 自动生成邮箱（第 ${attemptRuns} 次尝试）===`, 'info');
-    return null;
-  }
-
-  if (currentState.email) {
-    return currentState.email;
+    const generatedEmail = buildGeneratedAliasEmail(currentState);
+    await setEmailState(generatedEmail);
+    await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：2925 邮箱已就绪：${generatedEmail}（第 ${attemptRuns} 次尝试）===`, 'ok');
+    return generatedEmail;
   }
 
   if (shouldUseCustomRegistrationEmail(currentState)) {
@@ -5685,7 +5743,7 @@ async function runAutoSequenceFromStep(startStep, context = {}) {
   if (continued) {
     await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：继续当前进度，从步骤 ${startStep} 开始（第 ${attemptRuns} 次尝试）===`, 'info');
   } else {
-    await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：第 ${attemptRuns} 次尝试，阶段 1，获取 OAuth 链接并打开注册页 ===`, 'info');
+    await addLog(`=== 目标 ${targetRun}/${totalRuns} 轮：第 ${attemptRuns} 次尝试，阶段 1，准备邮箱、获取 OAuth 链接并打开注册页 ===`, 'info');
   }
 
   if (startStep <= 2) {
@@ -6341,10 +6399,17 @@ async function resumeAutoRun() {
 }
 
 // ============================================================
-// Step 1: Get OAuth Link
+// Step 1: Prepare Email & Get OAuth Link
 // ============================================================
 
 async function executeStep1(state) {
+  await ensureRegistrationEmailReadyForStep1(state, {
+    allowAutoWait: Boolean(state.autoRunning),
+    currentRun: state.autoRunCurrentRun,
+    totalRuns: state.autoRunTotalRuns,
+    attemptRun: state.autoRunAttemptRun,
+  });
+
   if (getPanelMode(state) === 'sub2api') {
     return executeSub2ApiStep1(state);
   }
@@ -6478,23 +6543,9 @@ async function executeStep2(state) {
 // ============================================================
 
 async function executeStep3(state) {
-  let resolvedEmail = state.email;
-  if (isHotmailProvider(state)) {
-    const account = await ensureHotmailAccountForFlow({
-      allowAllocate: true,
-      markUsed: true,
-      preferredAccountId: state.currentHotmailAccountId || null,
-    });
-    resolvedEmail = account.email;
-  } else if (isLuckmailProvider(state)) {
-    const purchase = await ensureLuckmailPurchaseForFlow({ allowReuse: true });
-    resolvedEmail = purchase.email_address;
-  } else if (isGeneratedAliasProvider(state)) {
-    resolvedEmail = buildGeneratedAliasEmail(state);
-  }
-
+  const resolvedEmail = state.email;
   if (!resolvedEmail) {
-    throw new Error('缺少邮箱地址，请先在侧边栏粘贴邮箱。');
+    throw new Error('缺少邮箱地址，请先完成步骤 1。');
   }
 
   const password = state.customPassword || generatePassword();
@@ -7193,7 +7244,7 @@ async function ensureStep7VerificationPageReady() {
 
 async function executeStep6(state) {
   if (!state.email) {
-    throw new Error('缺少邮箱地址，请先完成步骤 3。');
+    throw new Error('缺少邮箱地址，请先完成步骤 1。');
   }
   let attempt = 0;
 
