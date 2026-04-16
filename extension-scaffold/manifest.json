@@ -5,7 +5,12 @@
   "description": "保留启动区、升级区、配置区、步骤区、日志区的 MV3 Side Panel 扩展骨架。",
   "permissions": [
     "sidePanel",
-    "storage"
+    "storage",
+    "tabs",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
   ],
   "background": {
     "service_worker": "background.js"

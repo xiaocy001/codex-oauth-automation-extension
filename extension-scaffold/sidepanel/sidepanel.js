@@ -50,15 +50,12 @@ const displayStatus = document.getElementById('display-status');
 const statusDot = document.querySelector('.status-dot');
 const logArea = document.getElementById('log-area');
 const stepsProgress = document.getElementById('steps-progress');
+const stepsList = document.getElementById('steps-list');
 const inputProjectName = document.getElementById('input-project-name');
 const selectEnvironment = document.getElementById('select-environment');
 const inputFeatureEnabled = document.getElementById('input-feature-enabled');
 const inputNote = document.getElementById('input-note');
 const toastContainer = document.getElementById('toast-container');
-
-const stepRows = Array.from(document.querySelectorAll('.step-row'));
-const stepButtons = Array.from(document.querySelectorAll('.step-btn'));
-const stepStatuses = Array.from(document.querySelectorAll('.step-status'));
 
 let latestState = null;
 let configMenuOpen = false;
@@ -138,21 +135,40 @@ function buildSnapshotText(state) {
 function renderSteps(steps) {
   const completedCount = steps.filter((step) => step.status === 'completed').length;
   stepsProgress.textContent = `${completedCount} / ${steps.length || 0}`;
+  stepsList.innerHTML = '';
 
-  stepRows.forEach((row) => row.dataset.status = 'pending');
-  stepButtons.forEach((button, index) => {
-    const step = steps[index];
-    button.textContent = step?.title || `步骤 ${index + 1}`;
-  });
-  stepStatuses.forEach((node, index) => {
-    const step = steps[index];
-    if (!step) {
-      node.textContent = '';
-      return;
-    }
-    const row = node.closest('.step-row');
-    row.dataset.status = step.status;
-    node.textContent = STATUS_ICONS[step.status] || '';
+  steps.forEach((step) => {
+    const row = document.createElement('div');
+    row.className = 'step-row';
+    row.dataset.step = String(step.id);
+    row.dataset.status = step.status || 'pending';
+
+    const indicator = document.createElement('div');
+    indicator.className = 'step-indicator';
+    indicator.dataset.step = String(step.id);
+
+    const num = document.createElement('span');
+    num.className = 'step-num';
+    num.textContent = String(step.id);
+    indicator.appendChild(num);
+
+    const button = document.createElement('button');
+    button.className = 'step-btn';
+    button.dataset.step = String(step.id);
+    button.textContent = step.title || `步骤 ${step.id}`;
+    button.disabled = latestState?.status === 'running';
+    button.addEventListener('click', async () => {
+      const state = await sendMessage('RUN_STEP', { stepId: step.id });
+      render(state);
+    });
+
+    const status = document.createElement('span');
+    status.className = 'step-status';
+    status.dataset.step = String(step.id);
+    status.textContent = STATUS_ICONS[step.status] || '';
+
+    row.append(indicator, button, status);
+    stepsList.appendChild(row);
   });
 }
 
@@ -365,14 +381,6 @@ async function initialize() {
     } finally {
       inputImportSettingsFile.value = '';
     }
-  });
-
-  stepButtons.forEach((button) => {
-    button.addEventListener('click', async () => {
-      const stepId = Number(button.dataset.step);
-      const state = await sendMessage('RUN_STEP', { stepId });
-      render(state);
-    });
   });
 
   chrome.runtime.onMessage.addListener((message) => {

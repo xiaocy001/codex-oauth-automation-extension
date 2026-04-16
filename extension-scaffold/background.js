@@ -1,23 +1,51 @@
-const STEP_TITLES = [
-  '步骤 1',
-  '步骤 2',
-  '步骤 3',
-  '步骤 4',
-  '步骤 5',
-  '步骤 6',
-  '步骤 7',
-  '步骤 8',
-  '步骤 9',
-];
+importScripts('page-operation-tool.js');
 
-const STEP_STATUS_ORDER = ['pending', 'running', 'completed', 'failed'];
 const SETTINGS_STORAGE_KEY = 'scaffoldSettings';
 const RUNTIME_STORAGE_KEY = 'scaffoldRuntimeState';
+const OPEN_MODE_LABELS = {
+  [PAGE_OPEN_MODE.NEW_TAB]: '新开标签',
+  [PAGE_OPEN_MODE.REUSE_DOMAIN_TAB]: '复用域名标签',
+  [PAGE_OPEN_MODE.CURRENT_TAB]: '当前标签',
+};
+const STEP_DEFINITIONS = [
+  {
+    id: 1,
+    title: '打开页面并读取首条结果',
+    execute: async () => {
+      return executeStepOneFlow();
+    },
+  },
+  {
+    id: 2,
+    title: '复用百度标签打开百度地图',
+    execute: async () => {
+      return pageOperationTool.loadPage(PAGE_OPEN_MODE.REUSE_DOMAIN_TAB, 'https://map.baidu.com');
+    },
+  },
+  {
+    id: 3,
+    title: '当前标签打开示例页面',
+    execute: async () => {
+      return pageOperationTool.loadPage(PAGE_OPEN_MODE.CURRENT_TAB, 'https://example.com');
+    },
+  },
+];
+const STEP_ONE_PAGE_URL = 'https://www.baidu.com';
+const STEP_ONE_TEXTAREA_SELECTOR = '#chat-textarea';
+const STEP_ONE_SUBMIT_SELECTOR = '#chat-submit-button';
+const STEP_ONE_RESULT_SELECTOR = 'div.cos-text-subtitle-sm.cos-highlight';
+const STEP_WAIT_TIMEOUT_MS = 30000;
+const STEP_WAIT_INTERVAL_MS = 500;
+const pageOperationTool = new PageOperationTool();
+
+let state = createDefaultState();
+let activeExecutionId = 0;
+const readyPromise = initialize();
 
 function createDefaultSteps() {
-  return STEP_TITLES.map((title, index) => ({
-    id: index + 1,
-    title,
+  return STEP_DEFINITIONS.map((step) => ({
+    id: step.id,
+    title: step.title,
     status: 'pending',
   }));
 }
@@ -28,6 +56,17 @@ function createDefaultSettings() {
     environment: 'dev',
     note: '',
     featureEnabled: false,
+  };
+}
+
+function createDefaultUpdateInfo() {
+  return {
+    currentVersion: chrome.runtime.getManifest().version,
+    latestVersion: null,
+    hasUpdate: false,
+    summary: '当前为骨架版本，尚未配置远程更新源。',
+    checkedAt: null,
+    sourceUrl: null,
   };
 }
 
@@ -44,19 +83,10 @@ function createDefaultState() {
         timestamp: Date.now(),
       },
     ],
-    updateInfo: {
-      currentVersion: chrome.runtime.getManifest().version,
-      latestVersion: null,
-      hasUpdate: false,
-      summary: '当前为骨架版本，尚未配置远程更新源。',
-      checkedAt: null,
-      sourceUrl: null,
-    },
+    updateInfo: createDefaultUpdateInfo(),
+    pageRegistry: {},
   };
 }
-
-let state = createDefaultState();
-const readyPromise = initialize();
 
 async function loadPersistedState() {
   const stored = await chrome.storage.local.get([SETTINGS_STORAGE_KEY, RUNTIME_STORAGE_KEY]);
@@ -71,26 +101,52 @@ async function loadPersistedState() {
     steps: normalizeSteps(runtime.steps),
     logs: normalizeLogs(runtime.logs),
     updateInfo: {
-      ...createDefaultState().updateInfo,
+      ...createDefaultUpdateInfo(),
       ...(runtime.updateInfo || {}),
       currentVersion: chrome.runtime.getManifest().version,
     },
+    pageRegistry: normalizePageRegistry(runtime.pageRegistry),
   };
+  pageOperationTool.hydrateRegistry(state.pageRegistry);
 }
 
 function normalizeSteps(steps) {
+  const fallbackSteps = createDefaultSteps();
   if (!Array.isArray(steps) || steps.length === 0) {
-    return createDefaultSteps();
+    return fallbackSteps;
   }
 
-  return createDefaultSteps().map((fallbackStep, index) => {
-    const step = steps[index] || {};
+  const storedById = new Map(
+    steps
+      .filter((step) => step && Number.isInteger(step.id))
+      .map((step) => [step.id, step]),
+  );
+
+  return fallbackSteps.map((fallbackStep) => {
+    const step = storedById.get(fallbackStep.id) || {};
     return {
       id: fallbackStep.id,
-      title: typeof step.title === 'string' && step.title.trim() ? step.title.trim() : fallbackStep.title,
-      status: STEP_STATUS_ORDER.includes(step.status) ? step.status : 'pending',
+      title: fallbackStep.title,
+      status: normalizeStepStatus(step.status),
     };
   });
+}
+
+function normalizeStepStatus(status) {
+  if (status === 'running' || status === 'completed' || status === 'failed') {
+    return status;
+  }
+  return 'pending';
+}
+
+function normalizePageRegistry(pageRegistry) {
+  if (!pageRegistry || typeof pageRegistry !== 'object' || Array.isArray(pageRegistry)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(pageRegistry).filter(([, tabId]) => Number.isInteger(tabId) && tabId > 0),
+  );
 }
 
 function normalizeLogs(logs) {
@@ -108,6 +164,7 @@ function normalizeLogs(logs) {
 }
 
 async function persistState() {
+  state.pageRegistry = pageOperationTool.exportRegistry();
   await chrome.storage.local.set({
     [SETTINGS_STORAGE_KEY]: state.settings,
     [RUNTIME_STORAGE_KEY]: {
@@ -116,6 +173,7 @@ async function persistState() {
       steps: state.steps,
       logs: state.logs,
       updateInfo: state.updateInfo,
+      pageRegistry: state.pageRegistry,
     },
   });
 }
@@ -158,6 +216,23 @@ function addLog(message, level = 'info') {
   ].slice(-200);
 }
 
+function startExecution() {
+  activeExecutionId += 1;
+  return activeExecutionId;
+}
+
+function cancelActiveExecution() {
+  activeExecutionId += 1;
+}
+
+function isExecutionActive(executionId) {
+  return activeExecutionId === executionId;
+}
+
+function getStepDefinition(stepId) {
+  return STEP_DEFINITIONS.find((step) => step.id === stepId) || null;
+}
+
 async function initialize() {
   await loadPersistedState();
   await setPanelBehavior();
@@ -172,6 +247,15 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.runtime.onStartup?.addListener(() => {
   void setPanelBehavior();
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  const nextRegistry = Object.fromEntries(
+    Object.entries(pageOperationTool.exportRegistry()).filter(([, savedTabId]) => savedTabId !== tabId),
+  );
+  pageOperationTool.hydrateRegistry(nextRegistry);
+  state.pageRegistry = nextRegistry;
+  void persistState();
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -218,55 +302,280 @@ async function saveSettings(nextSettings) {
 
 async function startRun(payload) {
   const nextRunCount = sanitizeRunCount(payload.runCount);
+  const executionId = startExecution();
+
   await commitState((draft) => {
     draft.runCount = nextRunCount;
     draft.status = 'running';
-    draft.steps = draft.steps.map((step) => ({ ...step, status: 'pending' }));
+    draft.steps = createDefaultSteps();
     addLog(`开始运行，计划执行 ${nextRunCount} 次。`);
   });
+
+  void runSequence(executionId, nextRunCount);
   return cloneState();
 }
 
 async function stopRun() {
+  cancelActiveExecution();
   await commitState((draft) => {
     draft.status = 'stopped';
+    draft.steps = draft.steps.map((step) => (step.status === 'running' ? { ...step, status: 'pending' } : step));
     addLog('运行已停止。', 'warn');
   });
   return cloneState();
 }
 
 async function resetRun() {
+  cancelActiveExecution();
   await commitState((draft) => {
     draft.status = 'idle';
     draft.runCount = 1;
     draft.steps = createDefaultSteps();
+    draft.pageRegistry = {};
     addLog('运行状态已重置。');
   });
+  pageOperationTool.hydrateRegistry({});
   return cloneState();
 }
 
 async function runStep(stepId) {
   const numericStepId = Number(stepId);
-  if (!Number.isInteger(numericStepId) || numericStepId < 1 || numericStepId > STEP_TITLES.length) {
+  const stepDefinition = getStepDefinition(numericStepId);
+  if (!stepDefinition) {
     throw new Error('步骤编号无效');
   }
 
+  const executionId = startExecution();
   await commitState((draft) => {
     draft.status = 'running';
     draft.steps = draft.steps.map((step) => {
-      if (step.id < numericStepId && step.status === 'pending') {
-        return { ...step, status: 'completed' };
-      }
       if (step.id === numericStepId) {
-        const currentIndex = STEP_STATUS_ORDER.indexOf(step.status);
-        const nextStatus = STEP_STATUS_ORDER[(currentIndex + 1) % STEP_STATUS_ORDER.length];
-        return { ...step, status: nextStatus };
+        return { ...step, status: 'pending' };
       }
       return step;
     });
-    addLog(`步骤 ${numericStepId} 状态已更新。`);
+    addLog(`手动执行步骤 ${numericStepId}：${stepDefinition.title}。`);
   });
+
+  await executeConfiguredStep(stepDefinition, executionId);
+  if (isExecutionActive(executionId) && state.status === 'running') {
+    await commitState((draft) => {
+      draft.status = 'idle';
+      addLog(`步骤 ${numericStepId} 执行结束。`);
+    });
+  }
   return cloneState();
+}
+
+async function runSequence(executionId, runCount) {
+  let terminatedEarly = false;
+
+  for (let round = 1; round <= runCount; round += 1) {
+    if (!isExecutionActive(executionId)) {
+      terminatedEarly = true;
+      break;
+    }
+
+    if (round > 1) {
+      await commitState((draft) => {
+        draft.steps = createDefaultSteps();
+        addLog(`开始第 ${round} 轮执行。`);
+      });
+    }
+
+    for (const stepDefinition of STEP_DEFINITIONS) {
+      const result = await executeConfiguredStep(stepDefinition, executionId);
+      if (!result.ok) {
+        terminatedEarly = true;
+        break;
+      }
+    }
+
+    if (terminatedEarly) {
+      break;
+    }
+  }
+
+  if (!isExecutionActive(executionId) || state.status !== 'running') {
+    return;
+  }
+
+  await commitState((draft) => {
+    draft.status = 'idle';
+    addLog('全部步骤已按顺序执行完成。');
+  });
+}
+
+async function executeConfiguredStep(stepDefinition, executionId) {
+  if (!isExecutionActive(executionId)) {
+    return { ok: false, reason: 'stopped' };
+  }
+
+  await commitState((draft) => {
+    draft.steps = draft.steps.map((step) => {
+      if (step.id === stepDefinition.id) {
+        return { ...step, status: 'running' };
+      }
+      return step;
+    });
+    addLog(`步骤 ${stepDefinition.id}：开始执行 ${stepDefinition.title}。`);
+  });
+
+  try {
+    const result = await executeStepAction(stepDefinition);
+    if (!isExecutionActive(executionId)) {
+      return { ok: false, reason: 'stopped' };
+    }
+
+    await commitState((draft) => {
+      draft.pageRegistry = pageOperationTool.exportRegistry();
+      draft.steps = draft.steps.map((step) => {
+        if (step.id === stepDefinition.id) {
+          return { ...step, status: 'completed' };
+        }
+        return step;
+      });
+      addLog(buildStepSuccessLog(stepDefinition, result));
+    });
+    return { ok: true, result };
+  } catch (error) {
+    if (!isExecutionActive(executionId)) {
+      return { ok: false, reason: 'stopped' };
+    }
+
+    await commitState((draft) => {
+      draft.status = 'error';
+      draft.steps = draft.steps.map((step) => {
+        if (step.id === stepDefinition.id) {
+          return { ...step, status: 'failed' };
+        }
+        return step;
+      });
+      addLog(`步骤 ${stepDefinition.id}：执行失败，${error?.message || '未知错误'}。`, 'error');
+    });
+    return { ok: false, reason: 'failed', error };
+  }
+}
+
+async function executeStepOneFlow() {
+  const pageResult = await pageOperationTool.loadPage(PAGE_OPEN_MODE.NEW_TAB, STEP_ONE_PAGE_URL);
+  const target = {
+    tabId: pageResult.tabId,
+    selector: STEP_ONE_TEXTAREA_SELECTOR,
+  };
+
+  await waitForPageObject({
+    tabId: pageResult.tabId,
+    selector: STEP_ONE_TEXTAREA_SELECTOR,
+  });
+  await pageOperationTool.inputValue({
+    ...target,
+    value: 'IP',
+  });
+  await waitForPageObject({
+    tabId: pageResult.tabId,
+    selector: STEP_ONE_SUBMIT_SELECTOR,
+  });
+  await pageOperationTool.click({
+    tabId: pageResult.tabId,
+    selector: STEP_ONE_SUBMIT_SELECTOR,
+  });
+
+  const firstResult = await waitForPageContent({
+    tabId: pageResult.tabId,
+    selector: STEP_ONE_RESULT_SELECTOR,
+    contentMode: PAGE_CONTENT_MODE.TEXT,
+  });
+
+  return {
+    ...pageResult,
+    output: firstResult.content,
+  };
+}
+
+async function waitForPageObject(target, timeoutMs = STEP_WAIT_TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+
+  while (Date.now() < deadline) {
+    try {
+      return await pageOperationTool.getPageObject(target);
+    } catch (error) {
+      lastError = error;
+      if (!isRetryablePageError(error)) {
+        throw error;
+      }
+      await delay(STEP_WAIT_INTERVAL_MS);
+    }
+  }
+
+  throw new Error(buildWaitErrorMessage(`等待页面对象超时：${target.selector}`, lastError));
+}
+
+async function waitForPageContent(target, timeoutMs = STEP_WAIT_TIMEOUT_MS) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+
+  while (Date.now() < deadline) {
+    try {
+      const result = await pageOperationTool.readPageContent(target);
+      if (typeof result.content === 'string' && result.content.trim()) {
+        return {
+          ...result,
+          content: result.content.trim(),
+        };
+      }
+      lastError = new Error(`页面内容为空：${target.selector}`);
+    } catch (error) {
+      lastError = error;
+      if (!isRetryablePageError(error)) {
+        throw error;
+      }
+    }
+
+    await delay(STEP_WAIT_INTERVAL_MS);
+  }
+
+  throw new Error(buildWaitErrorMessage(`等待页面内容超时：${target.selector}`, lastError));
+}
+
+function isRetryablePageError(error) {
+  const message = error?.message || '';
+  return message.includes('页面对象不存在')
+    || message.includes('页面内容为空')
+    || message.includes('The frame was removed')
+    || message.includes('Frame with ID')
+    || message.includes('Cannot access contents of the page');
+}
+
+function buildWaitErrorMessage(prefix, error) {
+  const message = error?.message || '';
+  if (!message) {
+    return prefix;
+  }
+  return `${prefix}；最后错误：${message}`;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function executeStepAction(stepDefinition) {
+  if (typeof stepDefinition.execute === 'function') {
+    return stepDefinition.execute();
+  }
+  throw new Error('未配置步骤执行方法');
+}
+
+function buildStepSuccessLog(stepDefinition, result) {
+  const openModeLabel = OPEN_MODE_LABELS[result?.mode] || '未知方式';
+  const targetUrl = result?.url || '未知地址';
+  const suffix = typeof result?.output === 'string' && result.output.trim()
+    ? `，结果：${result.output}`
+    : '';
+  return `步骤 ${stepDefinition.id}：已通过${openModeLabel}打开 ${targetUrl}（标签页 ${result?.tabId || '未知'}）${suffix}。`;
 }
 
 async function clearLogs() {
@@ -283,7 +592,7 @@ async function checkUpdates() {
       currentVersion: chrome.runtime.getManifest().version,
       latestVersion: chrome.runtime.getManifest().version,
       hasUpdate: false,
-      summary: '这是一个本地骨架模板。后续可替换为真实的更新检查逻辑。',
+      summary: `当前脚本已配置 ${STEP_DEFINITIONS.length} 个演示步骤，可继续替换为真实业务流程。`,
       checkedAt: Date.now(),
       sourceUrl: null,
     };
