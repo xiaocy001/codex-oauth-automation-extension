@@ -2,7 +2,7 @@
   root.MultiPageBackgroundPlusCheckoutBilling = factory();
 })(typeof self !== 'undefined' ? self : globalThis, function createBackgroundPlusCheckoutBillingModule() {
   const PLUS_CHECKOUT_SOURCE = 'plus-checkout';
-  const PLUS_CHECKOUT_INJECT_FILES = ['content/utils.js', 'content/plus-checkout.js'];
+  const PLUS_CHECKOUT_INJECT_FILES = ['content/automation-actions.js', 'content/utils.js', 'content/plus-checkout.js'];
   const PLUS_CHECKOUT_URL_PATTERN = /^https:\/\/chatgpt\.com\/checkout(?:\/|$)/i;
   const PLUS_CHECKOUT_FRAME_READY_DELAY_MS = 500;
   const MEIGUODIZHI_ADDRESS_ENDPOINT = 'https://www.meiguodizhi.com/api/v1/dz';

@@ -636,12 +636,17 @@
           const sessionUpdates = buildLuckmailSessionSettingsPayload(message.payload || {});
           const modeChanged = Object.prototype.hasOwnProperty.call(updates, 'plusModeEnabled')
             && Boolean(currentState?.plusModeEnabled) !== Boolean(updates.plusModeEnabled);
+          if (modeChanged && !Object.prototype.hasOwnProperty.call(updates, 'currentFlowId')) {
+            updates.currentFlowId = updates.plusModeEnabled ? 'oauth-plus' : 'oauth-normal';
+          }
+          const flowChanged = Object.prototype.hasOwnProperty.call(updates, 'currentFlowId')
+            && String(currentState?.currentFlowId || '') !== String(updates.currentFlowId || '');
           await setPersistentSettings(updates);
           const stateUpdates = {
             ...updates,
             ...sessionUpdates,
           };
-          if (modeChanged && typeof getStepIdsForState === 'function') {
+          if ((modeChanged || flowChanged) && typeof getStepIdsForState === 'function') {
             const nextStateForSteps = { ...currentState, ...stateUpdates };
             stateUpdates.stepStatuses = Object.fromEntries(
               getStepIdsForState(nextStateForSteps).map((stepId) => [stepId, 'pending'])

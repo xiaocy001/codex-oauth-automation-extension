@@ -19,8 +19,11 @@ importScripts(
   'background/navigation-utils.js',
   'background/logging-status.js',
   'background/steps/registry.js',
+  'background/automation-context.js',
   'data/step-definitions.js',
+  'data/automation-flow-registry.js',
   'data/address-sources.js',
+  'content/automation-actions.js',
   'background/steps/open-chatgpt.js',
   'background/steps/submit-signup-email.js',
   'background/steps/fill-password.js',
@@ -47,6 +50,8 @@ importScripts(
 
 const NORMAL_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({ plusModeEnabled: false }) || [];
 const PLUS_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({ plusModeEnabled: true }) || NORMAL_STEP_DEFINITIONS;
+const FLOW_REGISTRY = self.MultiPageAutomationFlowRegistry;
+const DEFAULT_FLOW_ID = FLOW_REGISTRY?.getDefaultFlowId?.() || 'oauth-normal';
 const ALL_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getAllSteps?.() || [
   ...NORMAL_STEP_DEFINITIONS,
   ...PLUS_STEP_DEFINITIONS,
@@ -313,7 +318,15 @@ const CONTRIBUTION_RUNTIME_KEYS = self.MultiPageBackgroundContributionOAuth?.RUN
   || Object.keys(CONTRIBUTION_RUNTIME_DEFAULTS);
 
 function isPlusModeState(state = {}) {
+  const flowId = FLOW_REGISTRY?.getFlowIdForState?.(state) || '';
+  if (flowId) {
+    return Boolean(FLOW_REGISTRY?.isPlusFlow?.(flowId));
+  }
   return Boolean(state?.plusModeEnabled);
+}
+
+function getFlowIdForState(state = {}) {
+  return FLOW_REGISTRY?.getFlowIdForState?.(state) || (isPlusModeState(state) ? 'oauth-plus' : DEFAULT_FLOW_ID);
 }
 
 function normalizeContributionModeSource(value = '') {
@@ -351,11 +364,17 @@ function resolveContributionModeRoutingState(state = {}) {
 }
 
 function getStepDefinitionsForState(state = {}) {
+  if (FLOW_REGISTRY?.getSteps) {
+    return FLOW_REGISTRY.getSteps(getFlowIdForState(state));
+  }
   return isPlusModeState(state) ? PLUS_STEP_DEFINITIONS : NORMAL_STEP_DEFINITIONS;
 }
 
 function getStepIdsForState(state = {}) {
-  return isPlusModeState(state) ? PLUS_STEP_IDS : NORMAL_STEP_IDS;
+  return getStepDefinitionsForState(state)
+    .map((definition) => Number(definition.id))
+    .filter(Number.isFinite)
+    .sort((left, right) => left - right);
 }
 
 function getLastStepIdForState(state = {}) {
@@ -370,6 +389,25 @@ function getAuthChainStartStepId(state = {}) {
 function getStepDefinitionForState(step, state = {}) {
   const numericStep = Number(step);
   return getStepDefinitionsForState(state).find((definition) => Number(definition.id) === numericStep) || null;
+}
+
+function createAutomationContextForStep() {
+  const context = self.MultiPageBackgroundAutomationContext?.createAutomationContext?.({
+    addLog,
+    getState,
+    sendToContentScript,
+    sendToContentScriptResilient,
+    setState,
+    setStepStatus,
+    throwIfStopped,
+  });
+  if (!context) {
+    return null;
+  }
+  return {
+    ...context,
+    business: {},
+  };
 }
 
 initializeSessionStorageAccess();
@@ -433,6 +471,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   codex2apiUrl: DEFAULT_CODEX2API_URL,
   codex2apiAdminKey: '',
   customPassword: '',
+  currentFlowId: DEFAULT_FLOW_ID,
   plusModeEnabled: false,
   paypalEmail: '',
   paypalPassword: '',
@@ -1238,6 +1277,8 @@ function normalizePersistentSettingValue(key, value) {
       return String(value || '').trim();
     case 'customPassword':
       return String(value || '');
+    case 'currentFlowId':
+      return FLOW_REGISTRY?.normalizeFlowId?.(value) || DEFAULT_FLOW_ID;
     case 'paypalEmail':
       return String(value || '').trim();
     case 'paypalPassword':
@@ -7337,6 +7378,9 @@ async function executeStep(step, options = {}) {
     }
     await activeStepRegistry.executeStep(step, {
       ...state,
+      automationContext: typeof createAutomationContextForStep === 'function'
+        ? createAutomationContextForStep()
+        : null,
       visibleStep: Number(step),
       stepDefinition: getStepDefinitionForState(step, state),
     });
@@ -8416,7 +8460,7 @@ async function resumeAutoRun() {
 // ============================================================
 
 const SIGNUP_ENTRY_URL = 'https://chatgpt.com/';
-const SIGNUP_PAGE_INJECT_FILES = ['content/utils.js', 'content/auth-page-recovery.js', 'content/phone-auth.js', 'content/signup-page.js'];
+const SIGNUP_PAGE_INJECT_FILES = ['content/automation-actions.js', 'content/utils.js', 'content/auth-page-recovery.js', 'content/phone-auth.js', 'content/signup-page.js'];
 const panelBridge = self.MultiPageBackgroundPanelBridge?.createPanelBridge({
   chrome,
   addLog,
@@ -8822,16 +8866,24 @@ function buildStepRegistry(definitions = []) {
   return self.MultiPageBackgroundStepRegistry?.createStepRegistry(
     definitions.map((definition) => ({
       ...definition,
-      execute: stepExecutorsByKey[definition.key],
+      execute: stepExecutorsByKey[definition.executorKey || definition.key],
     }))
   );
 }
 
-const normalStepRegistry = buildStepRegistry(NORMAL_STEP_DEFINITIONS);
-const plusStepRegistry = buildStepRegistry(PLUS_STEP_DEFINITIONS);
+const stepRegistriesByFlowId = new Map(
+  (FLOW_REGISTRY?.getFlows?.() || [
+    { id: 'oauth-normal' },
+    { id: 'oauth-plus' },
+  ]).map((flow) => [flow.id, buildStepRegistry(FLOW_REGISTRY?.getSteps?.(flow.id)
+    || (flow.id === 'oauth-plus' ? PLUS_STEP_DEFINITIONS : NORMAL_STEP_DEFINITIONS))])
+);
+const normalStepRegistry = stepRegistriesByFlowId.get('oauth-normal') || buildStepRegistry(NORMAL_STEP_DEFINITIONS);
+const plusStepRegistry = stepRegistriesByFlowId.get('oauth-plus') || buildStepRegistry(PLUS_STEP_DEFINITIONS);
 
 function getStepRegistryForState(state = {}) {
-  return isPlusModeState(state) ? plusStepRegistry : normalStepRegistry;
+  return stepRegistriesByFlowId.get(getFlowIdForState(state))
+    || (isPlusModeState(state) ? plusStepRegistry : normalStepRegistry);
 }
 
 async function requestOAuthUrlFromPanel(state, options = {}) {
@@ -8935,7 +8987,7 @@ function getMailConfig(state) {
       source: 'gmail-mail',
       url: 'https://mail.google.com/mail/u/0/#inbox',
       label: 'Gmail 邮箱',
-      inject: ['content/activation-utils.js', 'content/utils.js', 'content/gmail-mail.js'],
+      inject: ['content/activation-utils.js', 'content/automation-actions.js', 'content/utils.js', 'content/gmail-mail.js'],
       injectSource: 'gmail-mail',
     };
   }
@@ -8968,7 +9020,7 @@ function getMailConfig(state) {
       url: `${host}/m/${encodeURIComponent(mailbox)}/`,
       label: `Inbucket 邮箱（${mailbox}）`,
       navigateOnReuse: true,
-      inject: ['content/activation-utils.js', 'content/utils.js', 'content/inbucket-mail.js'],
+      inject: ['content/activation-utils.js', 'content/automation-actions.js', 'content/utils.js', 'content/inbucket-mail.js'],
       injectSource: 'inbucket-mail',
     };
   }
@@ -8978,7 +9030,7 @@ function getMailConfig(state) {
       source: 'mail-2925',
       url: 'https://2925.com/#/mailList',
       label: '2925 邮箱',
-      inject: ['content/utils.js', 'content/mail-2925.js'],
+      inject: ['content/automation-actions.js', 'content/utils.js', 'content/mail-2925.js'],
       injectSource: 'mail-2925',
     };
   }

@@ -100,7 +100,7 @@
 
       await addLog(`${logLabel}：正在打开 CPA 面板...`);
 
-      const injectFiles = ['content/activation-utils.js', 'content/utils.js', 'content/vps-panel.js'];
+      const injectFiles = ['content/activation-utils.js', 'content/automation-actions.js', 'content/utils.js', 'content/vps-panel.js'];
       await closeConflictingTabsForSource('vps-panel', state.vpsUrl);
 
       const tab = await chrome.tabs.create({ url: state.vpsUrl, active: true });
@@ -189,7 +189,7 @@
 
       await addLog(`${logLabel}：正在打开 SUB2API 后台...`);
 
-      const injectFiles = ['content/utils.js', 'content/sub2api-panel.js'];
+      const injectFiles = ['content/automation-actions.js', 'content/utils.js', 'content/sub2api-panel.js'];
       await closeConflictingTabsForSource('sub2api-panel', sub2apiUrl);
 
       const tab = await chrome.tabs.create({ url: sub2apiUrl, active: true });

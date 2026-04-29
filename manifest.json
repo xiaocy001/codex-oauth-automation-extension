@@ -49,6 +49,7 @@
       ],
       "js": [
         "content/activation-utils.js",
+        "content/automation-actions.js",
         "content/utils.js",
         "content/auth-page-recovery.js",
         "content/phone-auth.js",
@@ -63,6 +64,7 @@
       ],
       "js": [
         "content/activation-utils.js",
+        "content/automation-actions.js",
         "content/utils.js",
         "content/qq-mail.js"
       ],
@@ -79,6 +81,7 @@
       ],
       "js": [
         "content/activation-utils.js",
+        "content/automation-actions.js",
         "content/utils.js",
         "content/mail-163.js"
       ],
@@ -92,6 +95,7 @@
       ],
       "js": [
         "content/activation-utils.js",
+        "content/automation-actions.js",
         "content/utils.js",
         "content/icloud-mail.js"
       ],
@@ -104,6 +108,7 @@
       ],
       "js": [
         "content/activation-utils.js",
+        "content/automation-actions.js",
         "content/utils.js",
         "content/duck-mail.js"
       ],

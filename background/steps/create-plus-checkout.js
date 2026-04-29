@@ -3,7 +3,7 @@
 })(typeof self !== 'undefined' ? self : globalThis, function createBackgroundPlusCheckoutCreateModule() {
   const PLUS_CHECKOUT_SOURCE = 'plus-checkout';
   const PLUS_CHECKOUT_ENTRY_URL = 'https://chatgpt.com/';
-  const PLUS_CHECKOUT_INJECT_FILES = ['content/utils.js', 'content/plus-checkout.js'];
+  const PLUS_CHECKOUT_INJECT_FILES = ['content/automation-actions.js', 'content/utils.js', 'content/plus-checkout.js'];
 
   function createPlusCheckoutCreateExecutor(deps = {}) {
     const {

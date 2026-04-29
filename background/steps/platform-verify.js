@@ -145,7 +145,7 @@
 
       await addLog(`步骤 ${visibleStep}：正在打开 CPA 面板...`);
 
-      const injectFiles = ['content/activation-utils.js', 'content/utils.js', 'content/vps-panel.js'];
+      const injectFiles = ['content/activation-utils.js', 'content/automation-actions.js', 'content/utils.js', 'content/vps-panel.js'];
       let tabId = await getTabId('vps-panel');
       const alive = tabId && await isTabAlive('vps-panel');
 
@@ -249,7 +249,7 @@
       }
 
       const sub2apiUrl = normalizeSub2ApiUrl(state.sub2apiUrl);
-      const injectFiles = ['content/utils.js', 'content/sub2api-panel.js'];
+      const injectFiles = ['content/automation-actions.js', 'content/utils.js', 'content/sub2api-panel.js'];
 
       await addLog(`步骤 ${visibleStep}：正在打开 SUB2API 后台...`);
 

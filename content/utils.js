@@ -41,6 +41,7 @@ function getRuntimeScriptSource() {
 const LOG_PREFIX = `[MultiPage:${SCRIPT_SOURCE}]`;
 const STOP_ERROR_MESSAGE = '流程已被用户停止。';
 let flowStopped = false;
+let contentAutomationActions = null;
 
 if (!window.__MULTIPAGE_UTILS_LISTENER_READY__) {
   window.__MULTIPAGE_UTILS_LISTENER_READY__ = true;
@@ -58,6 +59,13 @@ if (!window.__MULTIPAGE_UTILS_LISTENER_READY__) {
         source: getRuntimeScriptSource(),
         plusCheckoutReady: Boolean(window.__MULTIPAGE_PLUS_CHECKOUT_READY__),
       });
+    }
+
+    if (message.type === 'AUTOMATION_ACTION') {
+      Promise.resolve(getContentAutomationActions().executeAction(message.payload || {}))
+        .then((result) => sendResponse({ ok: true, ...(result || {}) }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error || '') }));
+      return true;
     }
   });
 }
@@ -424,6 +432,24 @@ function sleep(ms) {
 async function humanPause(min = 250, max = 850) {
   const duration = Math.floor(Math.random() * (max - min + 1)) + min;
   await sleep(duration);
+}
+
+function getContentAutomationActions() {
+  if (contentAutomationActions) {
+    return contentAutomationActions;
+  }
+  if (!self.MultiPageAutomationContentActions?.createContentActions) {
+    throw new Error('自动化动作框架尚未加载。');
+  }
+  contentAutomationActions = self.MultiPageAutomationContentActions.createContentActions({
+    fillInput,
+    fillSelect,
+    simulateClick,
+    sleep,
+    waitForElement,
+    waitForElementByText,
+  });
+  return contentAutomationActions;
 }
 
 function shouldReportReadyForFrame(source, isChildFrame) {

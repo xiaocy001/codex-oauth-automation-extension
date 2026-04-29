@@ -155,6 +155,7 @@ const inputCodex2ApiUrl = document.getElementById('input-codex2api-url');
 const rowCodex2ApiAdminKey = document.getElementById('row-codex2api-admin-key');
 const inputCodex2ApiAdminKey = document.getElementById('input-codex2api-admin-key');
 const rowCustomPassword = document.getElementById('row-custom-password');
+const selectFlow = document.getElementById('select-flow');
 const rowPlusMode = document.getElementById('row-plus-mode');
 const inputPlusModeEnabled = document.getElementById('input-plus-mode-enabled');
 const rowPaypalEmail = document.getElementById('row-paypal-email');
@@ -311,8 +312,9 @@ const btnAutoStartRestart = document.getElementById('btn-auto-start-restart');
 const btnAutoStartContinue = document.getElementById('btn-auto-start-continue');
 const autoHintText = document.querySelector('.auto-hint');
 const stepsList = document.querySelector('.steps-list');
+let currentFlowId = window.MultiPageAutomationFlowRegistry?.getDefaultFlowId?.() || 'oauth-normal';
 let currentPlusModeEnabled = false;
-let stepDefinitions = getStepDefinitionsForMode(false);
+let stepDefinitions = getStepDefinitionsForMode(false, currentFlowId);
 let STEP_IDS = stepDefinitions.map((step) => Number(step.id)).filter(Number.isFinite);
 let STEP_DEFAULT_STATUSES = Object.fromEntries(STEP_IDS.map((stepId) => [stepId, 'pending']));
 let SKIPPABLE_STEPS = new Set(STEP_IDS);
@@ -339,8 +341,25 @@ const AUTO_RUN_FALLBACK_RISK_PROMPT_DISMISSED_STORAGE_KEY = 'multipage-auto-run-
 const AUTO_RUN_PLUS_RISK_PROMPT_DISMISSED_STORAGE_KEY = 'multipage-auto-run-plus-risk-prompt-dismissed';
 const PLUS_CONTRIBUTION_PROMPT_LEDGER_STORAGE_KEY = 'multipage-plus-contribution-prompt-ledger';
 
-function getStepDefinitionsForMode(plusModeEnabled = false) {
-  return (window.MultiPageStepDefinitions?.getSteps?.({ plusModeEnabled }) || [])
+function getFlowIdForMode(plusModeEnabled = false, flowId = '') {
+  const registry = window.MultiPageAutomationFlowRegistry;
+  if (registry?.normalizeFlowId && flowId) {
+    return registry.normalizeFlowId(flowId);
+  }
+  return plusModeEnabled ? 'oauth-plus' : (registry?.getDefaultFlowId?.() || 'oauth-normal');
+}
+
+function isPlusFlowId(flowId) {
+  return Boolean(window.MultiPageAutomationFlowRegistry?.isPlusFlow?.(flowId));
+}
+
+function getStepDefinitionsForMode(plusModeEnabled = false, flowId = '') {
+  const resolvedFlowId = getFlowIdForMode(plusModeEnabled, flowId);
+  const flowSteps = window.MultiPageAutomationFlowRegistry?.getSteps?.(resolvedFlowId);
+  const steps = Array.isArray(flowSteps) && flowSteps.length > 0
+    ? flowSteps
+    : (window.MultiPageStepDefinitions?.getSteps?.({ plusModeEnabled }) || []);
+  return steps
     .sort((left, right) => {
       const leftOrder = Number.isFinite(left.order) ? left.order : left.id;
       const rightOrder = Number.isFinite(right.order) ? right.order : right.id;
@@ -349,12 +368,22 @@ function getStepDefinitionsForMode(plusModeEnabled = false) {
     });
 }
 
-function rebuildStepDefinitionState(plusModeEnabled = false) {
-  currentPlusModeEnabled = Boolean(plusModeEnabled);
-  stepDefinitions = getStepDefinitionsForMode(currentPlusModeEnabled);
+function rebuildStepDefinitionState(plusModeEnabled = false, flowId = '') {
+  currentFlowId = getFlowIdForMode(plusModeEnabled, flowId);
+  currentPlusModeEnabled = isPlusFlowId(currentFlowId) || Boolean(plusModeEnabled);
+  stepDefinitions = getStepDefinitionsForMode(currentPlusModeEnabled, currentFlowId);
   STEP_IDS = stepDefinitions.map((step) => Number(step.id)).filter(Number.isFinite);
   STEP_DEFAULT_STATUSES = Object.fromEntries(STEP_IDS.map((stepId) => [stepId, 'pending']));
   SKIPPABLE_STEPS = new Set(STEP_IDS);
+}
+
+function renderFlowOptions(selectedFlowId = currentFlowId) {
+  if (!selectFlow) return;
+  const flows = window.MultiPageAutomationFlowRegistry?.getFlows?.() || [];
+  selectFlow.innerHTML = flows.map((flow) => `
+    <option value="${escapeHtml(flow.id)}">${escapeHtml(flow.title || flow.id)}</option>
+  `).join('');
+  selectFlow.value = getFlowIdForMode(false, selectedFlowId);
 }
 const CONTRIBUTION_CONTENT_PROMPT_DISMISSED_VERSION_STORAGE_KEY = 'multipage-contribution-content-prompt-dismissed-version';
 const AUTO_RUN_FALLBACK_RISK_WARNING_MIN_RUNS = 3;
@@ -2235,6 +2264,14 @@ function collectSettingsPayload() {
     ipProxyRegion: currentIpProxyServiceProfile.region,
     codex2apiUrl: inputCodex2ApiUrl.value.trim(),
     codex2apiAdminKey: inputCodex2ApiAdminKey.value.trim(),
+    currentFlowId: typeof selectFlow !== 'undefined' && selectFlow
+      ? selectFlow.value
+      : (typeof getFlowIdForMode === 'function'
+        ? getFlowIdForMode(
+          typeof inputPlusModeEnabled !== 'undefined' ? Boolean(inputPlusModeEnabled?.checked) : false,
+          typeof currentFlowId !== 'undefined' ? currentFlowId : ''
+        )
+        : (typeof inputPlusModeEnabled !== 'undefined' && Boolean(inputPlusModeEnabled?.checked) ? 'oauth-plus' : 'oauth-normal')),
     plusModeEnabled: typeof inputPlusModeEnabled !== 'undefined' && inputPlusModeEnabled
       ? Boolean(inputPlusModeEnabled.checked)
       : Boolean(latestState?.plusModeEnabled),
@@ -2728,13 +2765,17 @@ function renderStepsList() {
 }
 
 function syncStepDefinitionsForMode(plusModeEnabled = false, options = {}) {
-  const nextPlusModeEnabled = Boolean(plusModeEnabled);
-  const shouldRender = Boolean(options.render) || nextPlusModeEnabled !== currentPlusModeEnabled;
+  const hasFlowOverride = Object.prototype.hasOwnProperty.call(options, 'flowId');
+  const nextFlowId = getFlowIdForMode(Boolean(plusModeEnabled), hasFlowOverride ? options.flowId : '');
+  const nextPlusModeEnabled = isPlusFlowId(nextFlowId) || Boolean(plusModeEnabled);
+  const shouldRender = Boolean(options.render)
+    || nextPlusModeEnabled !== currentPlusModeEnabled
+    || nextFlowId !== currentFlowId;
   if (!shouldRender) {
     return;
   }
 
-  rebuildStepDefinitionState(nextPlusModeEnabled);
+  rebuildStepDefinitionState(nextPlusModeEnabled, nextFlowId);
   renderStepsList();
 }
 
@@ -2744,7 +2785,12 @@ function syncStepDefinitionsForMode(plusModeEnabled = false, options = {}) {
 
 function applySettingsState(state) {
   if (typeof syncStepDefinitionsForMode === 'function') {
-    syncStepDefinitionsForMode(Boolean(state?.plusModeEnabled));
+    syncStepDefinitionsForMode(Boolean(state?.plusModeEnabled), {
+      flowId: state?.currentFlowId,
+    });
+  }
+  if (typeof renderFlowOptions === 'function') {
+    renderFlowOptions(currentFlowId);
   }
   const fallbackIpProxyService = '711proxy';
   const fallbackIpProxyMode = 'account';
@@ -2792,6 +2838,9 @@ function applySettingsState(state) {
   syncPasswordField(state || {});
   if (typeof inputPlusModeEnabled !== 'undefined' && inputPlusModeEnabled) {
     inputPlusModeEnabled.checked = Boolean(state?.plusModeEnabled);
+  }
+  if (typeof selectFlow !== 'undefined' && selectFlow) {
+    selectFlow.value = getFlowIdForMode(Boolean(state?.plusModeEnabled), state?.currentFlowId);
   }
   if (typeof inputPaypalEmail !== 'undefined' && inputPaypalEmail) {
     inputPaypalEmail.value = state?.paypalEmail || '';
@@ -4816,6 +4865,7 @@ const renderContributionMode = () => {
 const bindContributionModeEvents = contributionModeManager?.bindEvents
   || (() => { });
 bindContributionModeEvents();
+renderFlowOptions(currentFlowId);
 renderStepsList();
 
 async function exportSettingsFile() {
@@ -5518,8 +5568,24 @@ inputPassword.addEventListener('blur', () => {
 });
 
 inputPlusModeEnabled?.addEventListener('change', () => {
+  const nextFlowId = getFlowIdForMode(Boolean(inputPlusModeEnabled.checked));
+  if (selectFlow) {
+    selectFlow.value = nextFlowId;
+  }
   updatePlusModeUI();
-  syncStepDefinitionsForMode(Boolean(inputPlusModeEnabled.checked), { render: true });
+  syncStepDefinitionsForMode(Boolean(inputPlusModeEnabled.checked), { flowId: nextFlowId, render: true });
+  markSettingsDirty(true);
+  saveSettings({ silent: true }).catch(() => { });
+});
+
+selectFlow?.addEventListener('change', () => {
+  const nextFlowId = getFlowIdForMode(false, selectFlow.value);
+  const nextPlusModeEnabled = isPlusFlowId(nextFlowId);
+  if (inputPlusModeEnabled) {
+    inputPlusModeEnabled.checked = nextPlusModeEnabled;
+  }
+  updatePlusModeUI();
+  syncStepDefinitionsForMode(nextPlusModeEnabled, { flowId: nextFlowId, render: true });
   markSettingsDirty(true);
   saveSettings({ silent: true }).catch(() => { });
 });
